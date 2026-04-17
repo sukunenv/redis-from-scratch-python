@@ -104,4 +104,18 @@ def handle_zset(c, cmd_p, target):
                 target.sendall(b":0\r\n")
         return True
 
+    elif c == "ZSCORE":
+        # Format: ZSCORE key member → "berapa nilai si member ini?"
+        k, member = arg(1), arg(2)
+        if k not in store.DATA_STORE:
+            target.sendall(b"$-1\r\n")
+        else:
+            zset, _ = store.DATA_STORE[k]
+            if not isinstance(zset, store.SortedSet) or member not in zset.members:
+                target.sendall(b"$-1\r\n")
+            else:
+                score_str = str(zset.members[member])
+                target.sendall(f"${len(score_str)}\r\n{score_str}\r\n".encode())
+        return True
+
     return False
