@@ -69,6 +69,12 @@ def execute_command(cmd_p, target):
                 if target not in store.REPLICAS:
                     store.REPLICAS.append(target)
 
+        elif c == "WAIT":
+            # Perintah menunggu konfirmasi sinkronisasi dari Slave
+            # Untuk tahap awal, kita cukup balas dengan jumlah Slave yang terhubung
+            num_replicas = len(store.REPLICAS)
+            target.sendall(f":{num_replicas}\r\n".encode())
+
         elif c == "ECHO":
             val = arg(1) or ""
             target.sendall(f"${len(val)}\r\n{val}\r\n".encode())
