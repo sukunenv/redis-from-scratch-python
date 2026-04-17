@@ -63,6 +63,24 @@ def execute_command(cmd_p, target, session=None):
             res = f"*3\r\n$9\r\nsubscribe\r\n${len(channel)}\r\n{channel}\r\n:{count}\r\n"
             target.sendall(res.encode())
 
+        elif c == "UNSUBSCRIBE":
+            # Perintah berhenti berlangganan channel
+            channel = arg(1) or ""
+            count = 0
+            if session is not None:
+                # 1. Hapus dari sesi lokal klien
+                session["subscribed_channels"].discard(channel)
+                count = len(session["subscribed_channels"])
+                
+                # 2. Hapus dari Buku Besar Global
+                with store.BLOCK_LOCK:
+                    if channel in store.SUBSCRIBERS:
+                        store.SUBSCRIBERS[channel].discard(target)
+                        
+            # Respons standar Redis: ["unsubscribe", nama_channel, jumlah_sisa_langganan]
+            res = f"*3\r\n$11\r\nunsubscribe\r\n${len(channel)}\r\n{channel}\r\n:{count}\r\n"
+            target.sendall(res.encode())
+
         elif c == "PUBLISH":
             # Perintah mengirim pesan ke channel
             channel = arg(1) or ""
