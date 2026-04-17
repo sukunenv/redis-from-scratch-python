@@ -8,7 +8,24 @@ def handle_client(connection):
             data = connection.recv(1024)
             if not data:
                 break
-            connection.sendall(b"+PONG\r\n")
+            
+            # Kita potong-potong pesannya berdasarkan tanda Enter (\r\n)
+            # Pesan akan jadi daftar kata: ['*2', '$4', 'ECHO', '$3', 'hey', '']
+            parts = data.decode().split("\r\n")
+            
+            # Bagian [2] adalah perintahnya (PING atau ECHO)
+            command = parts[2].upper()
+            
+            if command == "PING":
+                connection.sendall(b"+PONG\r\n")
+            elif command == "ECHO":
+                # Bagian [4] adalah kata yang mau dibalas (misal: 'hey')
+                payload = parts[4]
+                # Kita susun jawabannya pakai format: $panjang_kata\r\nkata\r\n
+                response = f"${len(payload)}\r\n{payload}\r\n"
+                connection.sendall(response.encode())
+    except Exception:
+        pass
     finally:
         connection.close()
 
