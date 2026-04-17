@@ -91,4 +91,17 @@ def handle_zset(c, cmd_p, target):
         target.sendall(res.encode())
         return True
 
+    elif c == "ZCARD":
+        # Format: ZCARD key → berapa jumlah anggota?
+        k = arg(1)
+        if k not in store.DATA_STORE:
+            target.sendall(b":0\r\n")
+        else:
+            zset, _ = store.DATA_STORE[k]
+            if isinstance(zset, store.SortedSet):
+                target.sendall(f":{len(zset.members)}\r\n".encode())
+            else:
+                target.sendall(b":0\r\n")
+        return True
+
     return False
