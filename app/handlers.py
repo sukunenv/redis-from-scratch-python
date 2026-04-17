@@ -6,6 +6,7 @@ from app.handlers_list import handle_list
 from app.handlers_stream import handle_stream
 from app.handlers_zset import handle_zset
 from app.handlers_generic import handle_generic
+from app.handlers_geo import handle_geo
 
 def execute_command(cmd_p, target, session=None):
     """
@@ -35,6 +36,9 @@ def execute_command(cmd_p, target, session=None):
 
         # 6. Coba di Departemen Sorted Set
         if handle_zset(c, cmd_p, target): return
+
+        # 7. Coba di Departemen Geospatial
+        if handle_geo(c, cmd_p, target): return
 
     except Exception as e:
         print(f"Error executing command {cmd_p}: {e}")
