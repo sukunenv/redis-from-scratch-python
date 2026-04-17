@@ -35,10 +35,16 @@ REPLICA_OFFSETS = {}
 # Offset total yang sudah dikeluarkan Master (untuk propagasi)
 MASTER_REPL_OFFSET = 0
 
-# Konfigurasi Server (RDB Persistence)
+import os
+
+# Konfigurasi Server (RDB Persistence & AOF)
 CONFIG = {
-    "dir": ".",
-    "dbfilename": "dump.rdb"
+    "dir": os.getcwd(),
+    "dbfilename": "dump.rdb",
+    "appendonly": "no",
+    "appenddirname": "appendonlydir",
+    "appendfilename": "appendonly.aof",
+    "appendfsync": "everysec"
 }
 
 class SortedSet:
