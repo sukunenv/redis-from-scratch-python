@@ -123,32 +123,42 @@ def initiate_handshake(master_host, master_port, my_port):
         cmd3 = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
         master_conn.sendall(cmd3.encode())
         
-        # 5. Lewati balasan FULLRESYNC dan file RDB kosong
-        # Kita baca dulu balasannya (+FULLRESYNC...)
-        resp = master_conn.recv(1024)
+        # 5. Baca respons Master (FULLRESYNC + RDB + mungkin ada perintah awal)
+        # Kita simpan semuanya ke buffer awal
+        initial_data = master_conn.recv(4096)
         
-        # Jika balasan berisi RDB ($...), kita pastikan sudah terbaca semua
-        # Di tahap ini RDB sangat kecil, jadi recv(1024) biasanya sudah cukup mengambil semuanya
+        # Cari di mana posisi perintah pertama (*) dimulai
+        # FULLRESYNC dimulai dengan '+'
+        # RDB dimulai dengan '$'
+        # Perintah propagasi dimulai dengan '*'
         
-        # 6. MODE PROPAGASI: Tetap terhubung dan dengerin perintah dari Master
+        # Trik: Kita buang semua data sampai kita ketemu '*' pertama
+        first_cmd_idx = initial_data.find(b'*')
+        
+        # Jika ada perintah yang nyelip di buffer awal, proses sekarang!
+        if first_cmd_idx != -1:
+            leftover = initial_data[first_cmd_idx:]
+            all_cmds = parse_resp(leftover)
+            for c_cmd, cmd_len in all_cmds:
+                if not c_cmd: continue
+                class ReplicationProxy:
+                    def sendall(self, d):
+                        if b"REPLCONF" in d and b"ACK" in d: master_conn.sendall(d)
+                execute_command(c_cmd, ReplicationProxy())
+                store.REPLICA_OFFSET += cmd_len
+
+        # 6. MODE PROPAGASI: Lanjutkan dengerin sisa perintah
         while True:
             data = master_conn.recv(4096)
             if not data: break
             
-            # Terjemahkan perintah dari Master dan hitung byte-nya
             all_cmds = parse_resp(data)
             for c_cmd, cmd_len in all_cmds:
                 if not c_cmd: continue
-                
-                # Jalankan perintah: 
-                # Slave tetap diam untuk SET/PING, tapi WAJIB jawab untuk REPLCONF ACK
                 class ReplicationProxy:
                     def sendall(self, d):
-                        if b"REPLCONF" in d and b"ACK" in d:
-                            master_conn.sendall(d)
-                
+                        if b"REPLCONF" in d and b"ACK" in d: master_conn.sendall(d)
                 execute_command(c_cmd, ReplicationProxy())
-                # UPDATE OFFSET: Tambahkan panjang byte perintah ini ke total offset
                 store.REPLICA_OFFSET += cmd_len
 
     except Exception as e:
