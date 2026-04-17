@@ -125,6 +125,7 @@ def initiate_handshake(master_host, master_port, my_port):
         cmd3 = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
         master_conn.sendall(cmd3.encode())
         # Untuk tahap ini kita tidak perlu menunggu balasan PSYNC
+    except Exception as e:
         print(f"Gagal jabat tangan dengan Master: {e}")
 
 def main():
