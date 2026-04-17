@@ -103,6 +103,20 @@ def handle_client(connection):
                     
                     # Pastikan ini adalah sebuah daftar (list)
                     if isinstance(data_lama, list):
+                        panjang = len(data_lama)
+                        
+                        # Ubah index negatif jadi positif (menghitung dari belakang)
+                        if start < 0:
+                            start = panjang + start
+                        if stop < 0:
+                            stop = panjang + stop
+                            
+                        # Aturan Redis: kalau terlalu mundur ke belakang, anggap saja 0 (paling depan)
+                        if start < 0:
+                            start = 0
+                        if stop < 0:
+                            stop = 0
+                            
                         # Ambil potongan dari start sampai stop (berhenti ditambah 1 karena aturan Python)
                         potongan = data_lama[start:stop + 1]
                         
