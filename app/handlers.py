@@ -13,10 +13,11 @@ def propagate_command(cmd_p):
     for arg in cmd_p:
         res += f"${len(str(arg))}\r\n{arg}\r\n"
     data = res.encode()
-    # Kirim ke semua Slave yang terdaftar
-    for replica in store.REPLICAS:
-        try: replica.sendall(data)
-        except: pass
+    # Kirim ke semua Slave yang terdaftar secara aman
+    with store.BLOCK_LOCK:
+        for replica in store.REPLICAS:
+            try: replica.sendall(data)
+            except: pass
 
 def execute_command(cmd_p, target):
     """
@@ -59,8 +60,9 @@ def execute_command(cmd_p, target):
             target.sendall(header + rdb_bin)
             
             # 3. DAFTARKAN SLAVE: Mulai sekarang koneksi ini akan menerima update data
-            if target not in store.REPLICAS:
-                store.REPLICAS.append(target)
+            with store.BLOCK_LOCK:
+                if target not in store.REPLICAS:
+                    store.REPLICAS.append(target)
 
         elif c == "ECHO":
             val = arg(1) or ""
