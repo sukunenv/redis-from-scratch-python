@@ -18,9 +18,15 @@ if _appendonly.strip().lower() == "yes":
     os.makedirs(_aof_dir, exist_ok=True)
     
     # Bikin file AOF kosong dengan suffix .1.incr.aof
-    _aof_filepath = os.path.join(_aof_dir, f"{_appendfilename}.1.incr.aof")
+    _aof_filename = f"{_appendfilename}.1.incr.aof"
+    _aof_filepath = os.path.join(_aof_dir, _aof_filename)
     if not os.path.exists(_aof_filepath):
         open(_aof_filepath, 'a').close()
+        
+    # Bikin file manifest
+    _manifest_filepath = os.path.join(_aof_dir, f"{_appendfilename}.manifest")
+    with open(_manifest_filepath, "w") as f:
+        f.write(f"file {_aof_filename} seq 1 type i\n")
 
 import socket
 import threading
