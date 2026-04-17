@@ -25,6 +25,10 @@ BLOCK_LOCK = threading.Lock()
 # - "kotak_hasil" (list) = tempat meletakkan barang yang sudah diambil
 BLOCKING_CLIENTS = {}
 
+# STREAM_BLOCKING_CLIENTS = Antrean orang yang menunggu data baru di Stream.
+# Berbeda dengan List, Stream tidak "menghilangkan" data saat dibaca,
+# jadi kita cukup menyimpan bel untuk membangunkan orang-orang ini saat ada XADD baru.
+STREAM_BLOCKING_CLIENTS = {}
 
 def handle_client(connection):
     # Fungsi ini dijalankan untuk setiap klien yang terhubung
@@ -245,6 +249,12 @@ def handle_client(connection):
                     # Sukses
                     response = f"${len(entry_id)}\r\n{entry_id}\r\n"
                     connection.sendall(response.encode())
+
+                    # === BARU: Bangunkan klien XREAD yang sedang menunggu Stream ini ===
+                    with BLOCK_LOCK:
+                        if key in STREAM_BLOCKING_CLIENTS:
+                            for bel, base_id in STREAM_BLOCKING_CLIENTS[key]:
+                                bel.set() # Tekan belnya!
                 else:
                     # Gagal karena melanggar aturan ke-2
                     connection.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
@@ -320,60 +330,110 @@ def handle_client(connection):
             # PERINTAH: XREAD → Membaca stream mulai dari ID tertentu (Eksklusif)
             # ─────────────────────────────────────────
             elif command == "XREAD":
-                # Contoh: XREAD STREAMS stream1 stream2 id1 id2
-                # Kata "STREAMS" ada di parts[4]. Argumen mulai dari parts[6]
+                # Kita ubah semua bagian menjadi huruf besar untuk memudahkan pencarian kata BLOCK dan STREAMS
+                upper_parts = [p.upper() for p in parts]
+                
+                # --- 1. Cek apakah ada opsi BLOCK ---
+                is_blocking = False
+                timeout_ms = 0
+                if "BLOCK" in upper_parts:
+                    is_blocking = True
+                    block_idx = upper_parts.index("BLOCK")
+                    timeout_ms = int(parts[block_idx + 2])
+                
+                # --- 2. Cari argumen STREAMS ---
+                streams_idx = upper_parts.index("STREAMS")
                 args = []
-                for i in range(6, len(parts) - 1, 2):
+                for i in range(streams_idx + 2, len(parts) - 1, 2):
                     args.append(parts[i])
                 
-                # Karena jumlah kunci = jumlah ID, kita bagi dua list-nya
                 num_streams = len(args) // 2
                 keys = args[:num_streams]
                 ids = args[num_streams:]
 
-                response_streams = []
-                
-                # Kita pasangkan setiap nama kunci dengan ID batasnya
-                for k, base_id in zip(keys, ids):
-                    base_ms, base_seq = map(int, base_id.split("-"))
-                    
-                    # Kalau stream-nya ada di gudang
-                    if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream):
-                        stream = DATA_STORE[k][0]
-                        entries_found = []
-                        
-                        for entry_id, fields in stream.entries:
-                            entry_ms, entry_seq = map(int, entry_id.split("-"))
-                            
-                            # Aturan XREAD: EKSKLUSIF (Hanya yang LEBIH BESAR dari base_id)
-                            if (entry_ms > base_ms) or (entry_ms == base_ms and entry_seq > base_seq):
-                                entries_found.append((entry_id, fields))
-                        
-                        # Kalau ada data yang nyangkut, masukkan ke hasil akhir
-                        if entries_found:
-                            response_streams.append((k, entries_found))
+                # --- Fungsi Pembantu: Mengambil Data ---
+                # Karena kita mungkin butuh mencari data 2 kali (sebelum nunggu & sesudah bangun)
+                def get_xread_data():
+                    resp = []
+                    for k, base_id in zip(keys, ids):
+                        base_ms, base_seq = map(int, base_id.split("-"))
+                        if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream):
+                            stream = DATA_STORE[k][0]
+                            entries_found = []
+                            for entry_id, fields in stream.entries:
+                                entry_ms, entry_seq = map(int, entry_id.split("-"))
+                                # Aturan XREAD: EKSKLUSIF (Hanya yang LEBIH BESAR)
+                                if (entry_ms > base_ms) or (entry_ms == base_ms and entry_seq > base_seq):
+                                    entries_found.append((entry_id, fields))
+                            if entries_found:
+                                resp.append((k, entries_found))
+                    return resp
 
-                # --- Susun balasan RESP (Sangat berlapis) ---
-                if response_streams:
-                    response = f"*{len(response_streams)}\r\n"
-                    for k, entries in response_streams:
-                        response += "*2\r\n" # [ Nama_Kunci, [Daftar_Entri] ]
-                        response += f"${len(k)}\r\n{k}\r\n"
-                        response += f"*{len(entries)}\r\n"
-                        
+                # --- Fungsi Pembantu: Menyusun Balasan ---
+                def format_xread_response(resp_streams):
+                    res = f"*{len(resp_streams)}\r\n"
+                    for k, entries in resp_streams:
+                        res += "*2\r\n"
+                        res += f"${len(k)}\r\n{k}\r\n"
+                        res += f"*{len(entries)}\r\n"
                         for entry_id, fields in entries:
-                            response += "*2\r\n" # [ ID_Entri, [Pasangan_Key_Value] ]
-                            response += f"${len(entry_id)}\r\n{entry_id}\r\n"
-                            
-                            response += f"*{len(fields) * 2}\r\n"
+                            res += "*2\r\n"
+                            res += f"${len(entry_id)}\r\n{entry_id}\r\n"
+                            res += f"*{len(fields) * 2}\r\n"
                             for f_key, f_val in fields.items():
-                                response += f"${len(f_key)}\r\n{f_key}\r\n"
-                                response += f"${len(f_val)}\r\n{f_val}\r\n"
-                else:
-                    # Kalau tidak ada data sama sekali, balas null array
-                    response = "*-1\r\n"
+                                res += f"${len(f_key)}\r\n{f_key}\r\n"
+                                res += f"${len(f_val)}\r\n{f_val}\r\n"
+                    return res
 
-                connection.sendall(response.encode())
+                # --- LAKUKAN PENGECEKAN PERTAMA ---
+                response_streams = get_xread_data()
+
+                if response_streams:
+                    # Kalau saat ini sudah ada datanya, langsung berikan!
+                    connection.sendall(format_xread_response(response_streams).encode())
+                
+                elif is_blocking:
+                    # Kalau tidak ada data TAPI klien minta BLOCK (Tunggu)
+                    bel = threading.Event()
+                    
+                    # Daftarkan diri (bel) ke semua stream yang ditunggu
+                    with BLOCK_LOCK:
+                        for k, base_id in zip(keys, ids):
+                            if k not in STREAM_BLOCKING_CLIENTS:
+                                STREAM_BLOCKING_CLIENTS[k] = []
+                            STREAM_BLOCKING_CLIENTS[k].append((bel, base_id))
+                    
+                    # Menunggu sampai dibunyikan oleh XADD atau kehabisan waktu
+                    if timeout_ms > 0:
+                        woke_up = bel.wait(timeout_ms / 1000.0) # Konversi ke detik
+                    else:
+                        bel.wait() # 0 artinya tunggu tanpa batas waktu
+                        woke_up = True
+                    
+                    # Setelah bangun, jangan lupa cabut pendaftaran biar rapi
+                    with BLOCK_LOCK:
+                        for k, base_id in zip(keys, ids):
+                            if k in STREAM_BLOCKING_CLIENTS:
+                                STREAM_BLOCKING_CLIENTS[k] = [
+                                    item for item in STREAM_BLOCKING_CLIENTS[k] 
+                                    if item[0] != bel
+                                ]
+                    
+                    # Cek hasil setelah bangun
+                    if woke_up:
+                        # Bangun karena XADD: Cek ulang datanya!
+                        response_streams_after = get_xread_data()
+                        if response_streams_after:
+                            connection.sendall(format_xread_response(response_streams_after).encode())
+                        else:
+                            connection.sendall(b"*-1\r\n")
+                    else:
+                        # Waktu habis (Timeout), tidak ada yang nge-bel
+                        connection.sendall(b"*-1\r\n")
+                
+                else:
+                    # Kalau tidak ada data dan tidak minta nunggu
+                    connection.sendall(b"*-1\r\n")
 
 
 
