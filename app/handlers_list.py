@@ -24,16 +24,28 @@ def handle_list(c, cmd_p, target):
 
     elif c in ["LPOP", "RPOP"]:
         k = arg(1)
+        count = int(arg(2)) if arg(2) is not None else None
         if k not in store.DATA_STORE: target.sendall(b"$-1\r\n")
         else:
             l, _ = store.DATA_STORE[k]
             if not isinstance(l, list):
                 target.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
             elif not l: target.sendall(b"$-1\r\n")
-            else:
+            elif count is None:
+                # Tanpa count: kembalikan satu elemen sebagai Bulk String
                 v = l.pop(0) if c == "LPOP" else l.pop()
                 store.touch_key(k)
                 target.sendall(f"${len(v)}\r\n{v}\r\n".encode())
+                propagate_command(cmd_p)
+            else:
+                # Dengan count: kembalikan Array berisi N elemen
+                popped = []
+                for _ in range(min(count, len(l))):
+                    popped.append(l.pop(0) if c == "LPOP" else l.pop())
+                store.touch_key(k)
+                res = f"*{len(popped)}\r\n"
+                for v in popped: res += f"${len(v)}\r\n{v}\r\n"
+                target.sendall(res.encode())
                 propagate_command(cmd_p)
         return True
 
