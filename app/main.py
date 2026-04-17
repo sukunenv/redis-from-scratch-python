@@ -129,6 +129,10 @@ def handle_client(connection):
                     DATA_STORE[key] = (elemen_baru, None)
                     jumlah = len(elemen_baru)
 
+                # Balas dengan total jumlah elemen dalam format Integer (:jumlah\r\n)
+                # Kita simpan jumlahnya sekarang, SEBELUM membagikan ke klien yang menunggu
+                response = f":{jumlah}\r\n"
+
                 # === BARU: Setelah memasukkan barang, cek apakah ada orang yang menunggu ===
                 # Gembok dulu supaya aman (tidak ada thread lain yang ikut mengubah antrean)
                 with BLOCK_LOCK:
@@ -147,9 +151,6 @@ def handle_client(connection):
                             kotak_hasil.append(elemen)
                             # Bunyikan bel! "Barangmu sudah datang!"
                             bel.set()
-
-                            # Kurangi jumlah karena 1 elemen sudah diberikan ke klien yang menunggu
-                            jumlah -= 1
                         else:
                             # Daftar sudah habis, berhenti membagikan
                             break
@@ -158,9 +159,8 @@ def handle_client(connection):
                     if key in BLOCKING_CLIENTS and not BLOCKING_CLIENTS[key]:
                         del BLOCKING_CLIENTS[key]
 
-                # Balas dengan total jumlah elemen TERSISA dalam format Integer (:jumlah\r\n)
-                response = f":{jumlah}\r\n"
                 connection.sendall(response.encode())
+
 
             # ─────────────────────────────────────────
             # PERINTAH: LPUSH → Memasukkan elemen dari DEPAN daftar
