@@ -35,6 +35,12 @@ REPLICA_OFFSETS = {}
 # Offset total yang sudah dikeluarkan Master (untuk propagasi)
 MASTER_REPL_OFFSET = 0
 
+# Konfigurasi Server (RDB Persistence)
+CONFIG = {
+    "dir": ".",
+    "dbfilename": "dump.rdb"
+}
+
 class Stream:
     def __init__(self):
         self.entries = []

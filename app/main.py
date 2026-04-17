@@ -103,6 +103,14 @@ import app.store as store
 from app.replication import initiate_handshake
 
 def main():
+    # Mendukung argumen konfigurasi RDB
+    if "--dir" in sys.argv:
+        try: store.CONFIG["dir"] = sys.argv[sys.argv.index("--dir") + 1]
+        except: pass
+    if "--dbfilename" in sys.argv:
+        try: store.CONFIG["dbfilename"] = sys.argv[sys.argv.index("--dbfilename") + 1]
+        except: pass
+
     # Mendukung argumen port (misal: --port 6380)
     port = 6379
     if "--port" in sys.argv:
