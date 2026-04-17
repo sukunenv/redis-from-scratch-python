@@ -129,6 +129,12 @@ def main():
             try: store.CONFIG[key[2:]] = sys.argv[sys.argv.index(key) + 1]
             except: pass
 
+    # Bikin folder AOF kalau fiturnya dinyalakan
+    import os
+    if store.CONFIG.get("appendonly") == "yes":
+        aof_dir = os.path.join(store.CONFIG["dir"], store.CONFIG["appenddirname"])
+        os.makedirs(aof_dir, exist_ok=True)
+
     # MUAT DATA DARI RDB: Baca database dari file jika ada
     load_rdb()
 
