@@ -42,6 +42,14 @@ def handle_client(connection):
                         connection.sendall(b"+QUEUED\r\n")
                     continue
 
+                # --- FILTER SUBSCRIBED MODE (Satpam Mode) ---
+                # Jika klien sedang langganan, perintah yang boleh lewat terbatas
+                if len(session["subscribed_channels"]) > 0:
+                    allowed = ["SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "PING", "QUIT", "RESET"]
+                    if cmd_name not in allowed:
+                        connection.sendall(f"-ERR Can't execute '{cmd_name.lower()}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n".encode())
+                        continue
+
                 # --- LOGIKA KONTROL (MULTI, EXEC, DISCARD, WATCH) ---
                 if cmd_name == "MULTI":
                     session["is_transaction_active"] = True
