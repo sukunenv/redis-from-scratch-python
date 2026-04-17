@@ -51,6 +51,21 @@ class SortedSet:
         self.members[member] = float(score)
         return 1 if is_new else 0
 
+    def get_rank(self, member):
+        """Return 0-based rank sorted by score asc, then by name lexicographically."""
+        if member not in self.members:
+            return None
+        # Sort: primary = score, secondary = member name (lexicographic)
+        sorted_members = sorted(self.members.items(), key=lambda x: (x[1], x[0]))
+        for idx, (m, _) in enumerate(sorted_members):
+            if m == member:
+                return idx
+        return None
+
+    def get_sorted(self):
+        """Return all members sorted by score asc, then by name."""
+        return sorted(self.members.items(), key=lambda x: (x[1], x[0]))
+
 # Pencatatan langganan global (untuk PUBLISH)
 # Format: { "nama_channel": set(koneksi1, koneksi2, ...) }
 SUBSCRIBERS = {}
