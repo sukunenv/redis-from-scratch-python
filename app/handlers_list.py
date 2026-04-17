@@ -57,5 +57,17 @@ def handle_list(c, cmd_p, target):
                 for i in res_l: res += f"${len(i)}\r\n{i}\r\n"
                 target.sendall(res.encode())
         return True
+
+    elif c == "LINDEX":
+        k, idx = arg(1), int(arg(2))
+        if k not in store.DATA_STORE: target.sendall(b"$-1\r\n")
+        else:
+            l, _ = store.DATA_STORE[k]
+            if not isinstance(l, list): target.sendall(b"-WRONGTYPE ...\r\n")
+            elif idx < 0 or idx >= len(l): target.sendall(b"$-1\r\n")
+            else:
+                v = l[idx]
+                target.sendall(f"${len(v)}\r\n{v}\r\n".encode())
+        return True
     
     return False

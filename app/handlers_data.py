@@ -90,5 +90,43 @@ def handle_data(c, cmd_p, target):
         target.sendall(f":{count}\r\n".encode())
         propagate_command(cmd_p)
         return True
+
+    elif c == "EXISTS":
+        keys = cmd_p[1:]
+        count = 0
+        now = time.time()
+        for k in keys:
+            if k in store.DATA_STORE:
+                _, ex = store.DATA_STORE[k]
+                if ex and now > ex:
+                    del store.DATA_STORE[k]
+                    store.touch_key(k)
+                else: count += 1
+        target.sendall(f":{count}\r\n".encode())
+        return True
+
+    elif c == "EXPIRE":
+        k, sec = arg(1), int(arg(2))
+        if k in store.DATA_STORE:
+            v, _ = store.DATA_STORE[k]
+            store.DATA_STORE[k] = (v, time.time() + sec)
+            target.sendall(b":1\r\n")
+            propagate_command(cmd_p)
+        else: target.sendall(b":0\r\n")
+        return True
+
+    elif c == "TTL":
+        k = arg(1)
+        if k in store.DATA_STORE:
+            _, ex = store.DATA_STORE[k]
+            if ex:
+                remain = int(ex - time.time())
+                if remain < 0:
+                    del store.DATA_STORE[k]
+                    store.touch_key(k); target.sendall(b":-2\r\n")
+                else: target.sendall(f":{remain}\r\n".encode())
+            else: target.sendall(b":-1\r\n")
+        else: target.sendall(b":-2\r\n")
+        return True
     
     return False

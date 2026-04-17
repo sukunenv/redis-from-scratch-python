@@ -14,5 +14,16 @@ def handle_generic(c, cmd_p, target, session):
         val = arg(1) or ""
         target.sendall(f"${len(val)}\r\n{val}\r\n".encode())
         return True
+
+    elif c == "CONFIG":
+        # Mengambil informasi konfigurasi server
+        sub = arg(1).upper() if arg(1) else ""
+        if sub == "GET":
+            param = arg(2).lower() if arg(2) else ""
+            val = store.CONFIG.get(param, "")
+            # Format RESP: Array berisi 2 elemen [nama_param, nilai_param]
+            res = f"*2\r\n${len(param)}\r\n{param}\r\n${len(val)}\r\n{val}\r\n"
+            target.sendall(res.encode())
+        return True
     
     return False
