@@ -316,6 +316,65 @@ def handle_client(connection):
                 
                 connection.sendall(response.encode())
 
+            # ─────────────────────────────────────────
+            # PERINTAH: XREAD → Membaca stream mulai dari ID tertentu (Eksklusif)
+            # ─────────────────────────────────────────
+            elif command == "XREAD":
+                # Contoh: XREAD STREAMS stream1 stream2 id1 id2
+                # Kata "STREAMS" ada di parts[4]. Argumen mulai dari parts[6]
+                args = []
+                for i in range(6, len(parts) - 1, 2):
+                    args.append(parts[i])
+                
+                # Karena jumlah kunci = jumlah ID, kita bagi dua list-nya
+                num_streams = len(args) // 2
+                keys = args[:num_streams]
+                ids = args[num_streams:]
+
+                response_streams = []
+                
+                # Kita pasangkan setiap nama kunci dengan ID batasnya
+                for k, base_id in zip(keys, ids):
+                    base_ms, base_seq = map(int, base_id.split("-"))
+                    
+                    # Kalau stream-nya ada di gudang
+                    if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream):
+                        stream = DATA_STORE[k][0]
+                        entries_found = []
+                        
+                        for entry_id, fields in stream.entries:
+                            entry_ms, entry_seq = map(int, entry_id.split("-"))
+                            
+                            # Aturan XREAD: EKSKLUSIF (Hanya yang LEBIH BESAR dari base_id)
+                            if (entry_ms > base_ms) or (entry_ms == base_ms and entry_seq > base_seq):
+                                entries_found.append((entry_id, fields))
+                        
+                        # Kalau ada data yang nyangkut, masukkan ke hasil akhir
+                        if entries_found:
+                            response_streams.append((k, entries_found))
+
+                # --- Susun balasan RESP (Sangat berlapis) ---
+                if response_streams:
+                    response = f"*{len(response_streams)}\r\n"
+                    for k, entries in response_streams:
+                        response += "*2\r\n" # [ Nama_Kunci, [Daftar_Entri] ]
+                        response += f"${len(k)}\r\n{k}\r\n"
+                        response += f"*{len(entries)}\r\n"
+                        
+                        for entry_id, fields in entries:
+                            response += "*2\r\n" # [ ID_Entri, [Pasangan_Key_Value] ]
+                            response += f"${len(entry_id)}\r\n{entry_id}\r\n"
+                            
+                            response += f"*{len(fields) * 2}\r\n"
+                            for f_key, f_val in fields.items():
+                                response += f"${len(f_key)}\r\n{f_key}\r\n"
+                                response += f"${len(f_val)}\r\n{f_val}\r\n"
+                else:
+                    # Kalau tidak ada data sama sekali, balas null array
+                    response = "*-1\r\n"
+
+                connection.sendall(response.encode())
+
 
 
             # ─────────────────────────────────────────
