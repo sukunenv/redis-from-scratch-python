@@ -91,6 +91,36 @@ def handle_client(connection):
                 response = f":{jumlah}\r\n"
                 connection.sendall(response.encode())
                 
+            elif command == "LRANGE":
+                # LRANGE <kunci> <mulai> <berhenti>
+                key = parts[4]
+                start = int(parts[6])
+                stop = int(parts[8])
+                
+                # Cek apakah kunci ada di gudang
+                if key in DATA_STORE:
+                    data_lama, expiry = DATA_STORE[key]
+                    
+                    # Pastikan ini adalah sebuah daftar (list)
+                    if isinstance(data_lama, list):
+                        # Ambil potongan dari start sampai stop (berhenti ditambah 1 karena aturan Python)
+                        potongan = data_lama[start:stop + 1]
+                        
+                        # Mulai menyusun jawaban berformat Array (contoh: *3\r\n)
+                        response = f"*{len(potongan)}\r\n"
+                        
+                        # Menggabungkan setiap elemen ke dalam jawaban (contoh: $1\r\na\r\n)
+                        for item in potongan:
+                            response += f"${len(item)}\r\n{item}\r\n"
+                    else:
+                        # Jika datanya ternyata bukan list, balas array kosong
+                        response = "*0\r\n"
+                else:
+                    # Jika kuncinya tidak ada, balas array kosong
+                    response = "*0\r\n"
+                    
+                connection.sendall(response.encode())
+
     except Exception:
         pass
     finally:
