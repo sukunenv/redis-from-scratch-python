@@ -64,6 +64,17 @@ def handle_client(connection):
                     
                 connection.sendall(response.encode())
                 
+            elif command == "RPUSH":
+                # RPUSH <kunci> <elemen>
+                key = parts[4]
+                element = parts[6]
+                
+                # Di tahap ini, kita buat daftar baru dengan satu elemen
+                DATA_STORE[key] = ([element], None)
+                
+                # Balas dengan jumlah elemen dalam format Integer (:1\r\n)
+                connection.sendall(b":1\r\n")
+                
     except Exception:
         pass
     finally:
