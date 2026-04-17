@@ -322,8 +322,8 @@ def handle_client(connection):
             # ─────────────────────────────────────────
             elif command == "BLPOP":
                 # BLPOP <kunci> <timeout_detik>
-                key = parts[4]         # Nama daftar yang mau ditunggu
-                timeout = int(parts[6])  # Berapa detik mau menunggu (0 = selamanya)
+                key = parts[4]           # Nama daftar yang mau ditunggu
+                timeout = float(parts[6])  # Pakai float supaya bisa terima 0.1 atau 0.5 detik
 
                 sudah_dapat = False  # Tanda apakah kita sudah dapat barangnya
 
@@ -347,31 +347,40 @@ def handle_client(connection):
                     # Siapkan "bel" dan "kotak hasil" untuk klien ini
                     bel = threading.Event()    # Bel yang akan dibunyikan saat barang datang
                     kotak_hasil = []           # Kotak kosong untuk menerima barang nanti
+                    client_info = (bel, kotak_hasil)
 
                     # Daftarkan diri ke antrean tunggu (dengan gembok supaya aman)
                     with BLOCK_LOCK:
                         if key not in BLOCKING_CLIENTS:
                             BLOCKING_CLIENTS[key] = []  # Buat antrean baru kalau belum ada
-                        BLOCKING_CLIENTS[key].append((bel, kotak_hasil))  # Masuk antrean
+                        BLOCKING_CLIENTS[key].append(client_info)  # Masuk antrean
 
                     # === MENUNGGU DI SINI ===
                     # Thread ini akan "tidur" sampai bel dibunyikan oleh RPUSH
-                    # (timeout=0 berarti tunggu selamanya, None di Python = tanpa batas waktu)
                     if timeout == 0:
-                        bel.wait()  # Tunggu selamanya sampai bel berbunyi
+                        bel.wait()  # Tunggu selamanya
                     else:
-                        bel.wait(timeout=timeout)  # Tunggu maksimal sekian detik
+                        bel.wait(timeout=timeout)  # Tunggu maksimal sekian detik (float)
 
-                    # Bel sudah berbunyi! Cek apakah ada barang di kotak hasil
+                    # Bel sudah berbunyi ATAU waktu habis. 
+                    # Jika waktu habis, kita harus hapus diri kita dari antrean supaya tidak dikasih barang lagi nanti
+                    with BLOCK_LOCK:
+                        if not kotak_hasil:
+                            # Kalau kotak masih kosong, berarti kita berhenti karena waktu habis
+                            if key in BLOCKING_CLIENTS and client_info in BLOCKING_CLIENTS[key]:
+                                BLOCKING_CLIENTS[key].remove(client_info)
+
+                    # Cek hasil akhir
                     if kotak_hasil:
                         elemen = kotak_hasil[0]  # Ambil barang dari kotak
                         # Balas dengan Array berisi [nama_daftar, elemen]
                         response = f"*2\r\n${len(key)}\r\n{key}\r\n${len(elemen)}\r\n{elemen}\r\n"
                         connection.sendall(response.encode())
                     else:
-                        # Waktu habis, tidak ada barang yang datang. Balas null array.
+                        # Waktu habis benar-benar tidak ada barang. Balas null array.
                         response = "*-1\r\n"
                         connection.sendall(response.encode())
+
 
     except Exception:
         # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
