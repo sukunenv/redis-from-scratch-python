@@ -3,9 +3,9 @@ import threading
 import sys
 
 # Mengambil alat-alat yang kita butuhkan dari modul lain di dalam folder app
-from app.store import KEY_VERSIONS
 from app.protocol import parse_resp
 from app.handlers import execute_command
+import app.store as store
 
 def handle_client(connection):
     """
@@ -57,7 +57,7 @@ def handle_client(connection):
                 elif cmd_name == "WATCH":
                     # Catat versi kunci untuk Optimistic Locking
                     for k in p[1:]:
-                        watched_keys[k] = KEY_VERSIONS.get(k, 0)
+                        watched_keys[k] = store.KEY_VERSIONS.get(k, 0)
                     connection.sendall(b"+OK\r\n")
                 elif cmd_name == "EXEC":
                     if not is_transaction_active:
@@ -65,7 +65,7 @@ def handle_client(connection):
                         continue
                     
                     # VALIDASI WATCH: Apakah ada kunci yang berubah sejak di-WATCH?
-                    is_dirty = any(KEY_VERSIONS.get(k, 0) > v for k, v in watched_keys.items())
+                    is_dirty = any(store.KEY_VERSIONS.get(k, 0) > v for k, v in watched_keys.items())
                     
                     if is_dirty:
                         # Batalkan transaksi jika ada konflik
@@ -98,12 +98,18 @@ def handle_client(connection):
     except Exception: pass
     finally: connection.close()
 
+import app.store as store
+
 def main():
-    # Mengambil port dari argumen --port (default 6379)
+    # Mendukung argumen port (misal: --port 6380)
     port = 6379
     if "--port" in sys.argv:
         try: port = int(sys.argv[sys.argv.index("--port") + 1])
         except: pass
+    
+    # Mendukung argumen --replicaof <master_host> <master_port>
+    if "--replicaof" in sys.argv:
+        store.ROLE = "slave"
 
     # Buat server utama
     server = socket.create_server(("localhost", port), reuse_port=True)
