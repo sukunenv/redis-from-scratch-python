@@ -89,7 +89,7 @@ def handle_client(connection):
                 connection.sendall(response.encode())
 
             # ─────────────────────────────────────────
-            # PERINTAH: RPUSH → Memasukkan elemen ke daftar
+            # PERINTAH: RPUSH → Memasukkan elemen ke BELAKANG daftar
             # ─────────────────────────────────────────
             elif command == "RPUSH":
                 # RPUSH <kunci> <elemen1> <elemen2> ...
@@ -132,13 +132,10 @@ def handle_client(connection):
 
                 # Tampung semua elemen baru yang dikirim ke dalam list sementara
                 elemen_baru = []
-                # Mulai dari index 6, lompat 2 langkah (karena ada $panjang di antara setiap elemen)
                 for i in range(6, len(parts) - 1, 2):
                     elemen_baru.append(parts[i])
 
-                # Balik urutan elemen baru karena setiap elemen didorong satu-satu dari depan
-                # Contoh: input ["a","b","c"] → dibalik → ["c","b","a"] supaya saat ditempel ke depan
-                # hasilnya tetap urut seperti yang diharapkan Redis
+                # Balik urutan elemen baru, lalu tempelkan ke DEPAN daftar lama
                 elemen_baru_terbalik = list(reversed(elemen_baru))
 
                 # Cek apakah daftar dengan kunci ini sudah pernah dibuat sebelumnya
@@ -146,11 +143,10 @@ def handle_client(connection):
                     data_lama, expiry = DATA_STORE[key]  # Ambil daftar lamanya
 
                     if isinstance(data_lama, list):
-                        # Tempelkan elemen-elemen baru (yang sudah dibalik) ke bagian DEPAN daftar lama
-                        # Caranya: gabungkan elemen_baru_terbalik + data_lama jadi satu list baru
+                        # Gabungkan elemen baru (terbalik) + daftar lama = daftar lengkap baru
                         daftar_baru = elemen_baru_terbalik + data_lama
                         DATA_STORE[key] = (daftar_baru, expiry)  # Simpan kembali ke gudang
-                        jumlah = len(daftar_baru)  # Hitung total isinya sekarang
+                        jumlah = len(daftar_baru)
                     else:
                         # Kunci ada tapi isinya bukan list, ganti jadi list baru
                         DATA_STORE[key] = (elemen_baru_terbalik, None)
@@ -188,7 +184,7 @@ def handle_client(connection):
                         if stop < 0:
                             stop = panjang + stop
 
-                        # Aturan Redis: kalau index masih negatif setelah dihitung (terlalu jauh mundur),
+                        # Aturan Redis: kalau index masih negatif (terlalu jauh mundur),
                         # anggap saja mulai dari 0 (paling depan)
                         if start < 0:
                             start = 0
@@ -199,9 +195,8 @@ def handle_client(connection):
                         # (+1 karena Python tidak ikutkan angka terakhir dalam slice)
                         potongan = data_lama[start:stop + 1]
 
-                        # Susun jawaban dengan format Array RESP
-                        # Contoh untuk 3 elemen: *3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n
-                        response = f"*{len(potongan)}\r\n"  # Awali dengan jumlah elemen
+                        # Susun jawaban dengan format Array RESP, awali dengan jumlah elemen
+                        response = f"*{len(potongan)}\r\n"
 
                         # Tambahkan setiap elemen satu per satu ke dalam jawaban
                         for item in potongan:
@@ -240,10 +235,9 @@ def handle_client(connection):
                 response = f":{jumlah}\r\n"
                 connection.sendall(response.encode())
 
-
-        except Exception:
-            # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
-            pass
+    except Exception:
+        # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
+        pass
     finally:
         # Apapun yang terjadi, pastikan koneksi dengan klien ini ditutup dengan baik
         connection.close()
