@@ -301,6 +301,11 @@ def handle_client(connection):
                                 target.sendall(o.encode())
                             else: target.sendall(b"*0\r\n")
 
+                        elif c == "LLEN":
+                            k = arg(1)
+                            size = len(DATA_STORE[k][0]) if k in DATA_STORE and isinstance(DATA_STORE[k][0], list) else 0
+                            target.sendall(f":{size}\r\n".encode())
+
                         elif c == "LPOP":
                             k, cn = arg(1), (int(arg(2)) if len(cmd_p)>2 else None)
                             if k in DATA_STORE and isinstance(DATA_STORE[k][0], list) and DATA_STORE[k][0]:
@@ -333,6 +338,9 @@ def handle_client(connection):
                                 with BLOCK_LOCK:
                                     if k in BLOCKING_CLIENTS: BLOCKING_CLIENTS[k] = [x for x in BLOCKING_CLIENTS[k] if x[0] != wait_bel]
                                 target.sendall(f"*2\r\n${len(k)}\r\n{k}\r\n${len(wait_box[0])}\r\n{wait_box[0]}\r\n".encode() if wait_box else b"*-1\r\n")
+
+                        else:
+                            target.sendall(f"-ERR unknown command '{c}'\r\n".encode())
 
                     except Exception as e:
                         target.sendall(f"-ERR {str(e)}\r\n".encode())
