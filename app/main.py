@@ -2,19 +2,22 @@ import socket
 import threading
 import time
 
-# Gudang Data Utama
+# Gudang penyimpanan data utama (Memory)
+# Format: { "kunci": (nilai_data, waktu_kedaluwarsa) }
 DATA_STORE = {}
 
+# Struktur data khusus untuk Stream
 class Stream:
     def __init__(self):
         self.entries = []
 
-# Peralatan Sinkronisasi
+# Peralatan untuk menangani perintah Blocking (BLPOP & XREAD)
 BLOCK_LOCK = threading.Lock()
 BLOCKING_CLIENTS = {}
 STREAM_BLOCKING_CLIENTS = {}
 
 def format_xread_data(data):
+    """Mengubah data Stream menjadi format Array RESP yang bisa dibaca klien"""
     if not data: return "*-1\r\n"
     o = f"*{len(data)}\r\n"
     for k, ents in data:
@@ -25,6 +28,10 @@ def format_xread_data(data):
     return o
 
 def parse_resp(data):
+    """
+    Parser RESP yang cerdas: Memisahkan perintah-perintah yang dikirim klien.
+    Dapat menangani Pipelining (banyak perintah dalam satu paket data).
+    """
     if not data: return []
     try:
         lines = data.decode().split("\r\n")
@@ -46,6 +53,7 @@ def parse_resp(data):
                     if i + 1 < len(lines):
                         cmd_parts.append(lines[i+1])
                         i += 2
+                # Pastikan perintah lengkap sebelum dimasukkan ke daftar
                 if len(cmd_parts) == num_args:
                     commands.append(cmd_parts)
             except (ValueError, IndexError):
@@ -54,7 +62,9 @@ def parse_resp(data):
     return commands
 
 def handle_client(connection):
+    """Siklus hidup koneksi untuk setiap klien"""
     try:
+        # State transaksi per koneksi
         is_transaction_active = False
         transaction_queue = []
 
@@ -68,6 +78,7 @@ def handle_client(connection):
                 
                 cmd_name = p[0].upper()
 
+                # Jika MULTI aktif, masukkan perintah ke antrean (kecuali EXEC/DISCARD)
                 if is_transaction_active and cmd_name not in ["EXEC", "DISCARD"]:
                     transaction_queue.append(p)
                     connection.sendall(b"+QUEUED\r\n")
@@ -76,6 +87,7 @@ def handle_client(connection):
                 to_run = []
                 is_exec = False
 
+                # --- Logika Kontrol Transaksi ---
                 if cmd_name == "MULTI":
                     is_transaction_active = True
                     connection.sendall(b"+OK\r\n")
@@ -94,13 +106,15 @@ def handle_client(connection):
                         continue
                     is_exec = True
                     is_transaction_active = False
-                    to_run = list(transaction_queue)
+                    to_run = list(transaction_queue) # Ambil semua antrean
                     transaction_queue = []
                 else:
-                    to_run = [p]
+                    to_run = [p] # Jalankan perintah tunggal (mode normal)
 
                 res_list = []
+                # Loop eksekusi (bisa 1 kali atau berkali-kali jika EXEC)
                 for cmd_p in to_run:
+                    # Proxy untuk menangkap output perintah selama transaksi
                     class Proxy:
                         def __init__(self): self.buf = b""
                         def sendall(self, d): self.buf += d
@@ -112,6 +126,7 @@ def handle_client(connection):
 
                     try:
                         c = cmd_p[0].upper()
+                        # Ambil argumen secara aman agar tidak IndexError
                         def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
 
                         if c == "PING":
@@ -170,8 +185,14 @@ def handle_client(connection):
                                     elif isinstance(v, Stream): target.sendall(b"+stream\r\n")
                                     else: target.sendall(b"+none\r\n")
 
+                        elif c == "WATCH":
+                            # Tahap awal: cukup balas +OK
+                            # Nantinya kita akan melacak kunci yang dipantau di sini
+                            target.sendall(b"+OK\r\n")
+
                         elif c == "XADD":
                             k, eid = arg(1), arg(2)
+                            # Logika pembuatan ID otomatis (* dan -*)
                             if eid == "*":
                                 ms = int(time.time() * 1000)
                                 if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream) and DATA_STORE[k][0].entries:
@@ -210,7 +231,7 @@ def handle_client(connection):
                                     target.sendall(f"${len(eid)}\r\n{eid}\r\n".encode())
                                     with BLOCK_LOCK:
                                         if k in STREAM_BLOCKING_CLIENTS:
-                                            for bel, _ in STREAM_BLOCKING_CLIENTS[k]: bel.set()
+                                            for bel, _ in STREAM_BLOCKING_CLIENTS[k]: bel.set() # Bangunkan XREAD
                                 else: target.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
 
                         elif c == "XRANGE":
@@ -264,6 +285,7 @@ def handle_client(connection):
                                     for kk, bid in zip(ks, ids):
                                         if kk not in STREAM_BLOCKING_CLIENTS: STREAM_BLOCKING_CLIENTS[kk] = []
                                         STREAM_BLOCKING_CLIENTS[kk].append((bel, bid))
+                                # Tunggu sampai ada data baru (XADD) atau timeout
                                 woke = bel.wait(b_ms/1000.0) if b_ms > 0 else (bel.wait() or True)
                                 with BLOCK_LOCK:
                                     for kk in ks:
@@ -282,6 +304,7 @@ def handle_client(connection):
                                 DATA_STORE[k] = (l, ex)
                             else: DATA_STORE[k] = (items, None)
                             target.sendall(f":{len(DATA_STORE[k][0])}\r\n".encode())
+                            # Bangunkan klien BLPOP yang sedang menunggu
                             with BLOCK_LOCK:
                                 while k in BLOCKING_CLIENTS and BLOCKING_CLIENTS[k] and DATA_STORE[k][0]:
                                     it = DATA_STORE[k][0].pop(0)
@@ -347,6 +370,7 @@ def handle_client(connection):
 
                     if is_exec: res_list.append(proxy.buf)
 
+                # Gabungkan semua balasan transaksi dalam satu Array RESP
                 if is_exec:
                     pk = f"*{len(res_list)}\r\n".encode()
                     for r in res_list: pk += r
@@ -356,9 +380,11 @@ def handle_client(connection):
     finally: connection.close()
 
 def main():
+    # Inisialisasi server Redis di port 6379
     s = socket.create_server(("localhost", 6379), reuse_port=True)
     while True:
         c, _ = s.accept()
+        # Layani setiap klien di thread terpisah agar tidak saling menunggu
         threading.Thread(target=handle_client, args=(c,)).start()
 
 if __name__ == "__main__": main()
