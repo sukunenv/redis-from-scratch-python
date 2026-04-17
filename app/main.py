@@ -6,6 +6,14 @@ import time       # Alat untuk melihat jam/waktu sekarang (dipakai untuk fitur k
 # Isinya: { "kunci": (nilai, waktu_basi) }
 DATA_STORE = {}
 
+# === Class khusus untuk membedakan Stream dengan List/String biasa ===
+class Stream:
+    def __init__(self):
+        # Isinya adalah daftar (list) yang menampung tuple: (id_entri, dictionary_data)
+        # Contoh: [ ("0-1", {"suhu": "36", "lembab": "95"}), ... ]
+        self.entries = []
+
+
 # === Peralatan baru untuk BLPOP (Blocking) ===
 # BLOCK_LOCK = Kunci gembok. Sebelum mengecek/mengubah antrean tunggu, kita harus gembok dulu
 # supaya dua thread tidak saling tabrakan.
@@ -120,12 +128,50 @@ def handle_client(connection):
                             response = "+string\r\n"
                         elif isinstance(data, list):
                             response = "+list\r\n"
+                        elif isinstance(data, Stream):
+                            response = "+stream\r\n"
                         else:
                             response = "+none\r\n"
                 else:
                     # Kunci tidak ditemukan
                     response = "+none\r\n"
 
+                connection.sendall(response.encode())
+
+            # ─────────────────────────────────────────
+            # PERINTAH: XADD → Memasukkan entri data baru ke dalam Stream
+            # ─────────────────────────────────────────
+            elif command == "XADD":
+                # XADD <kunci> <id> <field1> <value1> <field2> <value2> ...
+                key = parts[4]      # Nama daftar Stream
+                entry_id = parts[6] # ID unik (misal: "0-1")
+
+                # Kumpulkan sisa argumen sebagai pasangan (field: value)
+                fields = {}
+                # Mulai dari index 8, lompati setiap 4 langkah 
+                # (karena index antar data dipisah oleh format RESP panjang string)
+                for i in range(8, len(parts) - 1, 4):
+                    field = parts[i]
+                    value = parts[i+2]
+                    fields[field] = value
+
+                # Cek apakah stream dengan kunci ini sudah ada
+                if key in DATA_STORE:
+                    data_lama, expiry = DATA_STORE[key]
+                    if isinstance(data_lama, Stream):
+                        # Kalau sudah ada, tambahkan entri baru ke dalamnya
+                        data_lama.entries.append((entry_id, fields))
+                    else:
+                        # (Abaikan kalau tipenya salah untuk sementara)
+                        pass
+                else:
+                    # Kalau belum ada, buat Stream baru
+                    stream_baru = Stream()
+                    stream_baru.entries.append((entry_id, fields))
+                    DATA_STORE[key] = (stream_baru, None)
+
+                # Balas dengan Bulk String berisi ID yang barusan ditambahkan
+                response = f"${len(entry_id)}\r\n{entry_id}\r\n"
                 connection.sendall(response.encode())
 
 
