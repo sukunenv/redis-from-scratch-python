@@ -5,6 +5,7 @@ from app.handlers_data import handle_data
 from app.handlers_list import handle_list
 from app.handlers_stream import handle_stream
 from app.handlers_zset import handle_zset
+from app.handlers_generic import handle_generic
 
 def execute_command(cmd_p, target, session=None):
     """
@@ -13,6 +14,9 @@ def execute_command(cmd_p, target, session=None):
     try:
         c = cmd_p[0].upper()
         def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
+
+        # 0. Coba di Departemen Dasar (PING, ECHO)
+        if handle_generic(c, cmd_p, target, session): return
 
         # 1. Coba di Departemen Pub/Sub
         if handle_pubsub(c, cmd_p, target, session): return
@@ -31,16 +35,6 @@ def execute_command(cmd_p, target, session=None):
 
         # 6. Coba di Departemen Sorted Set
         if handle_zset(c, cmd_p, target): return
-
-        # Perintah khusus yang belum dipecah
-        if c == "ECHO":
-            val = arg(1) or ""
-            target.sendall(f"${len(val)}\r\n{val}\r\n".encode())
-        
-        else:
-            # Jika tidak ada yang kenal perintahnya
-            # Untuk Redis asli ini akan kirim -ERR unknown command
-            pass
 
     except Exception as e:
         print(f"Error executing command {cmd_p}: {e}")
