@@ -27,10 +27,9 @@ def handle_geo(c, cmd_p, target):
 
         zset, _ = store.DATA_STORE[k]
         
-        # Simpan koordinat sebagai geohash score (tahap awal: simpan apa adanya)
-        # Redis menggunakan Geohash 52-bit, tapi untuk sekarang kita simpan dulu
-        from app.geo_utils import geohash_encode
-        score = geohash_encode(lon, lat)
+        # Sesuai petunjuk Tester: "hardcode the score to be 0 for now"
+        # Nanti kita aktifkan lagi fungsi geohash_encode kita!
+        score = 0
         added = zset.add_member(member, score)
         store.touch_key(k)
 
