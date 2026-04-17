@@ -41,6 +41,16 @@ CONFIG = {
     "dbfilename": "dump.rdb"
 }
 
+class SortedSet:
+    def __init__(self):
+        # member -> score
+        self.members = {}
+
+    def add_member(self, member, score):
+        is_new = member not in self.members
+        self.members[member] = float(score)
+        return 1 if is_new else 0
+
 # Pencatatan langganan global (untuk PUBLISH)
 # Format: { "nama_channel": set(koneksi1, koneksi2, ...) }
 SUBSCRIBERS = {}

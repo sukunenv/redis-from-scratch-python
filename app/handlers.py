@@ -4,6 +4,7 @@ from app.handlers_replication import handle_replication
 from app.handlers_data import handle_data
 from app.handlers_list import handle_list
 from app.handlers_stream import handle_stream
+from app.handlers_zset import handle_zset
 
 def execute_command(cmd_p, target, session=None):
     """
@@ -27,6 +28,9 @@ def execute_command(cmd_p, target, session=None):
 
         # 5. Coba di Departemen Stream
         if handle_stream(c, cmd_p, target): return
+
+        # 6. Coba di Departemen Sorted Set
+        if handle_zset(c, cmd_p, target): return
 
         # Perintah khusus yang belum dipecah
         if c == "ECHO":
