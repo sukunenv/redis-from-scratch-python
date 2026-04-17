@@ -53,6 +53,14 @@ def handle_client(connection):
             # Perintahnya selalu ada di bagian ke-3 (index ke-2), kita ubah jadi huruf besar
             command = parts[2].upper()
 
+            # === BARU: Logika Antrean Transaksi (Queueing) ===
+            # Jika mode transaksi aktif, semua perintah (kecuali EXEC dan DISCARD) 
+            # akan dimasukkan ke antrean dan tidak dijalankan saat ini juga.
+            if is_transaction_active and command not in ["EXEC", "DISCARD"]:
+                transaction_queue.append(parts)
+                connection.sendall(b"+QUEUED\r\n")
+                continue
+
             # ─────────────────────────────────────────
             # PERINTAH: PING → Balas PONG (Sekedar sapa)
             # ─────────────────────────────────────────
