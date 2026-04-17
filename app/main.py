@@ -1,378 +1,351 @@
-import socket    # Alat untuk membuat koneksi jaringan
-import threading  # Alat untuk melayani banyak klien sekaligus
-import time       # Alat untuk melihat jam/waktu sekarang
+import socket
+import threading
+import time
 
-# Ini adalah "Gudang Data" kita.
-# Isinya: { "kunci": (nilai, waktu_basi) }
+# Gudang Data Utama
 DATA_STORE = {}
 
-# === Class khusus untuk membedakan Stream dengan List/String biasa ===
 class Stream:
     def __init__(self):
         self.entries = []
 
-# === Peralatan untuk Blocking (BLPOP / XREAD) ===
+# Peralatan Sinkronisasi untuk Blocking Commands
 BLOCK_LOCK = threading.Lock()
 BLOCKING_CLIENTS = {}
 STREAM_BLOCKING_CLIENTS = {}
 
+def parse_resp(data):
+    """
+    Fungsi pembantu untuk memotong-motong data RESP yang masuk.
+    Bisa menangani banyak perintah sekaligus dalam satu paket data.
+    """
+    if not data: return []
+    lines = data.decode().split("\r\n")
+    commands = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line:
+            i += 1
+            continue
+        if line.startswith('*'):
+            num_args = int(line[1:])
+            cmd_parts = []
+            i += 1
+            for _ in range(num_args):
+                # Lewati baris $panjang, ambil isinya
+                if i + 1 < len(lines):
+                    cmd_parts.append(lines[i+1])
+                    i += 2
+            commands.append(cmd_parts)
+        else:
+            i += 1
+    return commands
+
 def handle_client(connection):
-    # Fungsi ini dijalankan untuk setiap klien yang terhubung
     try:
-        # === State untuk Transaksi (MULTI/EXEC) ===
         is_transaction_active = False
         transaction_queue = []
 
         while True:
-            # Mendengarkan pesan dari klien
-            data = connection.recv(1024)
-            if not data:
+            raw_data = connection.recv(4096)
+            if not raw_data:
                 break
 
-            # Parse data RESP
-            parts = data.decode().split("\r\n")
-            if len(parts) < 3:
-                continue
+            # Gunakan parser yang lebih kuat untuk memisahkan perintah
+            all_commands = parse_resp(raw_data)
+            
+            for cmd_parts in all_commands:
+                if not cmd_parts: continue
                 
-            command = parts[2].upper()
+                command = cmd_parts[0].upper()
 
-            # --- Logika Antrean Transaksi (Queueing) ---
-            if is_transaction_active and command not in ["EXEC", "DISCARD"]:
-                transaction_queue.append(parts)
-                connection.sendall(b"+QUEUED\r\n")
-                continue
-
-            # Tentukan perintah apa saja yang akan dijalankan
-            commands_to_run = []
-            sedang_exec = False
-
-            if command == "EXEC":
-                if not is_transaction_active:
-                    connection.sendall(b"-ERR EXEC without MULTI\r\n")
+                # --- Logika Transaksi (MULTI/EXEC/DISCARD) ---
+                if is_transaction_active and command not in ["EXEC", "DISCARD"]:
+                    transaction_queue.append(cmd_parts)
+                    connection.sendall(b"+QUEUED\r\n")
                     continue
-                sedang_exec = True
-                is_transaction_active = False
-                commands_to_run = list(transaction_queue)
-                transaction_queue = []
-            else:
-                commands_to_run = [parts]
 
-            # Penampung balasan jika ini adalah EXEC
-            exec_responses = []
+                commands_to_execute = []
+                is_exec_mode = False
 
-            # === LOOP EKSEKUSI PERINTAH ===
-            for p in commands_to_run:
-                # Gunakan proxy connection jika sedang EXEC agar balasan tidak langsung terkirim
-                current_conn = connection
-                if sedang_exec:
-                    class ProxyConn:
-                        def __init__(self): self.output = b""
-                        def sendall(self, d): self.output += d
-                    proxy = ProxyConn()
-                    current_conn = proxy
-
-                # Ambil perintah lokal dari p
-                cmd = p[2].upper()
-
-                # ─────────────────────────────────────────
-                # PERINTAH: PING
-                # ─────────────────────────────────────────
-                if cmd == "PING":
-                    current_conn.sendall(b"+PONG\r\n")
-
-                # ─────────────────────────────────────────
-                # PERINTAH: ECHO
-                # ─────────────────────────────────────────
-                elif cmd == "ECHO":
-                    payload = p[4]
-                    current_conn.sendall(f"${len(payload)}\r\n{payload}\r\n".encode())
-
-                # ─────────────────────────────────────────
-                # PERINTAH: SET
-                # ─────────────────────────────────────────
-                elif cmd == "SET":
-                    key, value = p[4], p[6]
-                    expiry = None
-                    if len(p) > 8 and p[8].upper() == "PX":
-                        expiry = time.time() + (int(p[10]) / 1000.0)
-                    DATA_STORE[key] = (value, expiry)
-                    current_conn.sendall(b"+OK\r\n")
-
-                # ─────────────────────────────────────────
-                # PERINTAH: GET
-                # ─────────────────────────────────────────
-                elif cmd == "GET":
-                    key = p[4]
-                    if key in DATA_STORE:
-                        val, exp = DATA_STORE[key]
-                        if exp and time.time() > exp:
-                            del DATA_STORE[key]
-                            current_conn.sendall(b"$-1\r\n")
-                        else:
-                            current_conn.sendall(f"${len(val)}\r\n{val}\r\n".encode())
-                    else:
-                        current_conn.sendall(b"$-1\r\n")
-
-                # ─────────────────────────────────────────
-                # PERINTAH: INCR
-                # ─────────────────────────────────────────
-                elif cmd == "INCR":
-                    key = p[4]
-                    if key in DATA_STORE:
-                        val, exp = DATA_STORE[key]
-                        try:
-                            num = int(val) + 1
-                            DATA_STORE[key] = (str(num), exp)
-                            current_conn.sendall(f":{num}\r\n".encode())
-                        except ValueError:
-                            current_conn.sendall(b"-ERR value is not an integer or out of range\r\n")
-                    else:
-                        DATA_STORE[key] = ("1", None)
-                        current_conn.sendall(b":1\r\n")
-
-                # ─────────────────────────────────────────
-                # PERINTAH: MULTI
-                # ─────────────────────────────────────────
-                elif cmd == "MULTI":
+                if command == "MULTI":
                     is_transaction_active = True
-                    current_conn.sendall(b"+OK\r\n")
-
-                # ─────────────────────────────────────────
-                # PERINTAH: TYPE
-                # ─────────────────────────────────────────
-                elif cmd == "TYPE":
-                    key = p[4]
-                    if key in DATA_STORE:
-                        d, exp = DATA_STORE[key]
-                        if exp and time.time() > exp:
-                            del DATA_STORE[key]
-                            current_conn.sendall(b"+none\r\n")
-                        else:
-                            if isinstance(d, str): current_conn.sendall(b"+string\r\n")
-                            elif isinstance(d, list): current_conn.sendall(b"+list\r\n")
-                            elif isinstance(d, Stream): current_conn.sendall(b"+stream\r\n")
-                            else: current_conn.sendall(b"+none\r\n")
+                    connection.sendall(b"+OK\r\n")
+                    continue
+                elif command == "DISCARD":
+                    if not is_transaction_active:
+                        connection.sendall(b"-ERR DISCARD without MULTI\r\n")
                     else:
-                        current_conn.sendall(b"+none\r\n")
+                        is_transaction_active = False
+                        transaction_queue = []
+                        connection.sendall(b"+OK\r\n")
+                    continue
+                elif command == "EXEC":
+                    if not is_transaction_active:
+                        connection.sendall(b"-ERR EXEC without MULTI\r\n")
+                        continue
+                    is_exec_mode = True
+                    is_transaction_active = False
+                    commands_to_execute = list(transaction_queue)
+                    transaction_queue = []
+                else:
+                    commands_to_execute = [cmd_parts]
 
-                # ─────────────────────────────────────────
-                # PERINTAH: XADD
-                # ─────────────────────────────────────────
-                elif cmd == "XADD":
-                    key, entry_id = p[4], p[6]
-                    # Logic ID generation (disingkat untuk efisiensi ruang)
-                    if entry_id == "*":
-                        ms = int(time.time() * 1000)
-                        if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream) and DATA_STORE[key][0].entries:
-                            l_id = DATA_STORE[key][0].entries[-1][0]
-                            l_ms, l_seq = map(int, l_id.split("-"))
-                            seq = l_seq + 1 if ms == l_ms else 0
-                            ms = max(ms, l_ms)
-                            entry_id = f"{ms}-{seq}"
-                        else: entry_id = f"{ms}-0"
-                    elif entry_id.endswith("-*"):
-                        ms = int(entry_id.split("-")[0])
-                        if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream) and DATA_STORE[key][0].entries:
-                            l_id = DATA_STORE[key][0].entries[-1][0]
-                            l_ms, l_seq = map(int, l_id.split("-"))
-                            seq = l_seq + 1 if ms == l_ms else (0 if ms > 0 else 1)
-                            entry_id = f"{ms}-{seq}"
-                        else: entry_id = f"{ms}-{0 if ms > 0 else 1}"
+                # Kolektor balasan untuk mode EXEC
+                exec_responses = []
 
-                    if entry_id == "0-0":
-                        current_conn.sendall(b"-ERR The ID specified in XADD must be greater than 0-0\r\n")
-                    else:
-                        flds = {}
-                        for i in range(8, len(p) - 1, 4): flds[p[i]] = p[i+2]
-                        valid = True
-                        if key in DATA_STORE:
-                            s, _ = DATA_STORE[key]
-                            if isinstance(s, Stream) and s.entries:
-                                l_ms, l_seq = map(int, s.entries[-1][0].split("-"))
-                                n_ms, n_seq = map(int, entry_id.split("-"))
-                                if n_ms < l_ms or (n_ms == l_ms and n_seq <= l_seq): valid = False
-                            if valid and isinstance(s, Stream): s.entries.append((entry_id, flds))
-                        else:
-                            s = Stream()
-                            s.entries.append((entry_id, flds))
-                            DATA_STORE[key] = (s, None)
-                        
-                        if valid:
-                            current_conn.sendall(f"${len(entry_id)}\r\n{entry_id}\r\n".encode())
-                            with BLOCK_LOCK:
-                                if key in STREAM_BLOCKING_CLIENTS:
-                                    for bel, _ in STREAM_BLOCKING_CLIENTS[key]: bel.set()
-                        else:
-                            current_conn.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
-
-                # ─────────────────────────────────────────
-                # PERINTAH: XRANGE
-                # ─────────────────────────────────────────
-                elif cmd == "XRANGE":
-                    key, start, end = p[4], p[6], p[8]
-                    def parse_id(rid, dflt_seq):
-                        if rid == "-": return 0, 0
-                        if rid == "+": return float('inf'), float('inf')
-                        parts = rid.split("-")
-                        return int(parts[0]), (int(parts[1]) if len(parts) > 1 else dflt_seq)
-                    s_ms, s_seq = parse_id(start, 0)
-                    e_ms, e_seq = parse_id(end, float('inf'))
-                    res = []
-                    if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream):
-                        for eid, flds in DATA_STORE[key][0].entries:
-                            ms, seq = map(int, eid.split("-"))
-                            if (ms > s_ms or (ms == s_ms and seq >= s_seq)) and (ms < e_ms or (ms == e_ms and seq <= e_seq)):
-                                res.append((eid, flds))
-                    out = f"*{len(res)}\r\n"
-                    for eid, flds in res:
-                        out += f"*2\r\n${len(eid)}\r\n{eid}\r\n*{len(flds)*2}\r\n"
-                        for fk, fv in flds.items(): out += f"${len(fk)}\r\n{fk}\r\n${len(fv)}\r\n{fv}\r\n"
-                    current_conn.sendall(out.encode())
-
-                # ─────────────────────────────────────────
-                # PERINTAH: XREAD
-                # ─────────────────────────────────────────
-                elif cmd == "XREAD":
-                    up = [x.upper() for x in p]
-                    b_ms = int(p[up.index("BLOCK")+2]) if "BLOCK" in up else -1
-                    ks_idx = up.index("STREAMS")
-                    args = p[ks_idx+2 : len(p)-1]
-                    num = len(args)//2
-                    ks, rids = args[:num], args[num:]
-                    ids = []
-                    for k, rid in zip(ks, rids):
-                        if rid == "$" and k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream) and DATA_STORE[k][0].entries:
-                            ids.append(DATA_STORE[k][0].entries[-1][0])
-                        else: ids.append("0-0" if rid == "$" else rid)
+                # === LOOP EKSEKUSI UTAMA ===
+                for p in commands_to_execute:
+                    # Proxy untuk menangkap output jika dalam mode EXEC
+                    class Proxy:
+                        def __init__(self): self.buf = b""
+                        def sendall(self, d): self.buf += d
                     
-                    def fetch(k_list, id_list):
-                        found_data = []
-                        for k, bid in zip(k_list, id_list):
-                            bms, bseq = map(int, bid.split("-"))
-                            if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream):
-                                matches = [(eid, f) for eid, f in DATA_STORE[k][0].entries if int(eid.split("-")[0]) > bms or (int(eid.split("-")[0]) == bms and int(eid.split("-")[1]) > bseq)]
-                                if matches: found_data.append((k, matches))
-                        return found_data
+                    target_conn = connection
+                    if is_exec_mode:
+                        proxy = Proxy()
+                        target_conn = proxy
 
-                    def pack(data):
-                        o = f"*{len(data)}\r\n"
-                        for k, ents in data:
-                            o += f"*2\r\n${len(k)}\r\n{k}\r\n*{len(ents)}\r\n"
-                            for eid, flds in ents:
-                                o += f"*2\r\n${len(eid)}\r\n{eid}\r\n*{len(flds)*2}\r\n"
-                                for fk, fv in flds.items(): o += f"${len(fk)}\r\n{fk}\r\n${len(fv)}\r\n{fv}\r\n"
-                        return o
+                    try:
+                        c = p[0].upper()
 
-                    initial = fetch(ks, ids)
-                    if initial: current_conn.sendall(pack(initial).encode())
-                    elif b_ms >= 0:
-                        bel = threading.Event()
-                        with BLOCK_LOCK:
-                            for k, bid in zip(ks, ids):
-                                if k not in STREAM_BLOCKING_CLIENTS: STREAM_BLOCKING_CLIENTS[k] = []
-                                STREAM_BLOCKING_CLIENTS[k].append((bel, bid))
-                        woke = bel.wait(b_ms/1000.0) if b_ms > 0 else (bel.wait() or True)
-                        with BLOCK_LOCK:
-                            for k in ks:
-                                if k in STREAM_BLOCKING_CLIENTS: STREAM_BLOCKING_CLIENTS[k] = [x for x in STREAM_BLOCKING_CLIENTS[k] if x[0] != bel]
-                        final = fetch(ks, ids) if woke else None
-                        current_conn.sendall(pack(final).encode() if final else b"*-1\r\n")
-                    else: current_conn.sendall(b"*-1\r\n")
+                        if c == "PING":
+                            target_conn.sendall(b"+PONG\r\n")
 
-                # ─────────────────────────────────────────
-                # PERINTAH: RPUSH / LPUSH
-                # ─────────────────────────────────────────
-                elif cmd in ["RPUSH", "LPUSH"]:
-                    key = p[4]
-                    els = [p[i] for i in range(6, len(p)-1, 2)]
-                    if cmd == "LPUSH": els = list(reversed(els))
-                    if key in DATA_STORE and isinstance(DATA_STORE[key][0], list):
-                        l, ex = DATA_STORE[key]
-                        if cmd == "RPUSH": l.extend(els)
-                        else: l = els + l
-                        DATA_STORE[key] = (l, ex)
-                    else: DATA_STORE[key] = (els, None)
-                    current_conn.sendall(f":{len(DATA_STORE[key][0])}\r\n".encode())
-                    with BLOCK_LOCK:
-                        while key in BLOCKING_CLIENTS and BLOCKING_CLIENTS[key] and DATA_STORE[key][0]:
-                            it = DATA_STORE[key][0].pop(0)
-                            bl, box = BLOCKING_CLIENTS[key].pop(0)
-                            box.append(it)
-                            bl.set()
+                        elif c == "ECHO":
+                            val = p[1] if len(p) > 1 else ""
+                            target_conn.sendall(f"${len(val)}\r\n{val}\r\n".encode())
 
-                # ─────────────────────────────────────────
-                # PERINTAH: LRANGE / LPOP / LLEN / BLPOP
-                # ─────────────────────────────────────────
-                elif cmd == "LRANGE":
-                    key, start, stop = p[4], int(p[6]), int(p[8])
-                    if key in DATA_STORE and isinstance(DATA_STORE[key][0], list):
-                        l = DATA_STORE[key][0]
-                        if start < 0: start += len(l)
-                        if stop < 0: stop += len(l)
-                        slice_obj = l[max(0, start):stop+1]
-                        o = f"*{len(slice_obj)}\r\n"
-                        for x in slice_obj: o += f"${len(x)}\r\n{x}\r\n"
-                        current_conn.sendall(o.encode())
-                    else: current_conn.sendall(b"*0\r\n")
+                        elif c == "SET":
+                            key, val = p[1], p[2]
+                            exp = None
+                            # SET k v PX 100
+                            if len(p) > 4 and p[3].upper() == "PX":
+                                exp = time.time() + (int(p[4]) / 1000.0)
+                            DATA_STORE[key] = (val, exp)
+                            target_conn.sendall(b"+OK\r\n")
 
-                elif cmd == "LLEN":
-                    key = p[4]
-                    size = len(DATA_STORE[key][0]) if key in DATA_STORE and isinstance(DATA_STORE[key][0], list) else 0
-                    current_conn.sendall(f":{size}\r\n".encode())
+                        elif c == "GET":
+                            key = p[1]
+                            if key in DATA_STORE:
+                                v, ex = DATA_STORE[key]
+                                if ex and time.time() > ex:
+                                    del DATA_STORE[key]
+                                    target_conn.sendall(b"$-1\r\n")
+                                elif not isinstance(v, str):
+                                    target_conn.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
+                                else:
+                                    target_conn.sendall(f"${len(v)}\r\n{v}\r\n".encode())
+                            else:
+                                target_conn.sendall(b"$-1\r\n")
 
-                elif cmd == "LPOP":
-                    key = p[4]
-                    cnt = int(p[6]) if len(p) > 6 and p[5].startswith("$") else None
-                    if key in DATA_STORE and isinstance(DATA_STORE[key][0], list) and DATA_STORE[key][0]:
-                        l, ex = DATA_STORE[key]
-                        if cnt:
-                            tkn, rem = l[:cnt], l[cnt:]
-                            DATA_STORE[key] = (rem, ex)
-                            o = f"*{len(tkn)}\r\n"
-                            for x in tkn: o += f"${len(x)}\r\n{x}\r\n"
-                            current_conn.sendall(o.encode())
-                        else:
-                            it = l.pop(0)
-                            current_conn.sendall(f"${len(it)}\r\n{it}\r\n".encode())
-                    else: current_conn.sendall(b"$-1\r\n")
+                        elif c == "INCR":
+                            key = p[1]
+                            if key in DATA_STORE:
+                                v, ex = DATA_STORE[key]
+                                if not isinstance(v, str):
+                                    target_conn.sendall(b"-ERR value is not an integer or out of range\r\n")
+                                else:
+                                    try:
+                                        num = int(v) + 1
+                                        DATA_STORE[key] = (str(num), ex)
+                                        target_conn.sendall(f":{num}\r\n".encode())
+                                    except (ValueError, TypeError):
+                                        target_conn.sendall(b"-ERR value is not an integer or out of range\r\n")
+                            else:
+                                DATA_STORE[key] = ("1", None)
+                                target_conn.sendall(b":1\r\n")
 
-                elif cmd == "BLPOP":
-                    key, tout = p[4], float(p[6])
-                    with BLOCK_LOCK:
-                        if key in DATA_STORE and isinstance(DATA_STORE[key][0], list) and DATA_STORE[key][0]:
-                            it = DATA_STORE[key][0].pop(0)
-                            current_conn.sendall(f"*2\r\n${len(key)}\r\n{key}\r\n${len(it)}\r\n{it}\r\n".encode())
-                        else:
-                            bl, box = threading.Event(), []
-                            if key not in BLOCKING_CLIENTS: BLOCKING_CLIENTS[key] = []
-                            BLOCKING_CLIENTS[key].append((bl, box))
-                            # Unlock while waiting
-                            BLOCK_LOCK.release()
-                            w = bl.wait(tout) if tout > 0 else (bl.wait() or True)
-                            BLOCK_LOCK.acquire()
-                            if key in BLOCKING_CLIENTS: BLOCKING_CLIENTS[key] = [x for x in BLOCKING_CLIENTS[key] if x[0] != bl]
-                            current_conn.sendall(f"*2\r\n${len(key)}\r\n{key}\r\n${len(box[0])}\r\n{box[0]}\r\n".encode() if box else b"*-1\r\n")
+                        elif c == "TYPE":
+                            key = p[1]
+                            if key not in DATA_STORE:
+                                target_conn.sendall(b"+none\r\n")
+                            else:
+                                d, ex = DATA_STORE[key]
+                                if ex and time.time() > ex:
+                                    del DATA_STORE[key]
+                                    target_conn.sendall(b"+none\r\n")
+                                else:
+                                    if isinstance(d, str): target_conn.sendall(b"+string\r\n")
+                                    elif isinstance(d, list): target_conn.sendall(b"+list\r\n")
+                                    elif isinstance(d, Stream): target_conn.sendall(b"+stream\r\n")
+                                    else: target_conn.sendall(b"+none\r\n")
 
-                # Jika sedang EXEC, simpan hasil proxy ke daftar
-                if sedang_exec:
-                    responses_for_exec.append(proxy.output)
+                        elif c == "XADD":
+                            key, eid = p[1], p[2]
+                            # Auto-ID Logic
+                            if eid == "*":
+                                ms = int(time.time() * 1000)
+                                if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream) and DATA_STORE[key][0].entries:
+                                    l_id = DATA_STORE[key][0].entries[-1][0]
+                                    l_ms, l_seq = map(int, l_id.split("-"))
+                                    seq = l_seq + 1 if ms == l_ms else 0
+                                    ms = max(ms, l_ms)
+                                    eid = f"{ms}-{seq}"
+                                else: eid = f"{ms}-0"
+                            elif eid.endswith("-*"):
+                                ms = int(eid.split("-")[0])
+                                if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream) and DATA_STORE[key][0].entries:
+                                    l_id = DATA_STORE[key][0].entries[-1][0]
+                                    l_ms, l_seq = map(int, l_id.split("-"))
+                                    seq = l_seq + 1 if ms == l_ms else (0 if ms > 0 else 1)
+                                    eid = f"{ms}-{seq}"
+                                else: eid = f"{ms}-{0 if ms > 0 else 1}"
 
-            # Jika tadi EXEC, kirim semua gabungan jawaban
-            if sedang_exec:
-                final_packet = f"*{len(responses_for_exec)}\r\n".encode()
-                for r in responses_for_exec: final_packet += r
-                connection.sendall(final_packet)
+                            if eid == "0-0":
+                                target_conn.sendall(b"-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                            else:
+                                # Fields parsing
+                                flds = {}
+                                for idx in range(3, len(p) - 1, 2):
+                                    flds[p[idx]] = p[idx+1]
+                                
+                                valid = True
+                                if key in DATA_STORE:
+                                    s, _ = DATA_STORE[key]
+                                    if isinstance(s, Stream) and s.entries:
+                                        l_ms, l_seq = map(int, s.entries[-1][0].split("-"))
+                                        n_ms, n_seq = map(int, eid.split("-"))
+                                        if n_ms < l_ms or (n_ms == l_ms and n_seq <= l_seq): valid = False
+                                    if valid and isinstance(s, Stream): s.entries.append((eid, flds))
+                                else:
+                                    s = Stream()
+                                    s.entries.append((eid, flds))
+                                    DATA_STORE[key] = (s, None)
+                                
+                                if valid:
+                                    target_conn.sendall(f"${len(eid)}\r\n{eid}\r\n".encode())
+                                    with BLOCK_LOCK:
+                                        if key in STREAM_BLOCKING_CLIENTS:
+                                            for bel, _ in STREAM_BLOCKING_CLIENTS[key]: bel.set()
+                                else:
+                                    target_conn.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+
+                        elif c == "XREAD":
+                            # Sederhanakan pencarian STREAMS dan BLOCK
+                            try:
+                                block_ms = -1
+                                if "BLOCK" in [x.upper() for x in p]:
+                                    block_ms = int(p[p.index("BLOCK") + 1] if "BLOCK" in p else p[[x.upper() for x in p].index("BLOCK") + 1])
+                                
+                                s_idx = -1
+                                for i, v in enumerate(p):
+                                    if v.upper() == "STREAMS":
+                                        s_idx = i
+                                        break
+                                
+                                remaining = p[s_idx+1:]
+                                num_ks = len(remaining) // 2
+                                ks, rids = remaining[:num_ks], remaining[num_ks:]
+                                ids = []
+                                for k, rid in zip(ks, rids):
+                                    if rid == "$" and key in DATA_STORE and isinstance(DATA_STORE[k][0], Stream) and DATA_STORE[k][0].entries:
+                                        ids.append(DATA_STORE[k][0].entries[-1][0])
+                                    else: ids.append("0-0" if rid == "$" else rid)
+
+                                def fetch_stream():
+                                    res_st = []
+                                    for k, bid in zip(ks, ids):
+                                        bms, bseq = map(int, bid.split("-"))
+                                        if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream):
+                                            mtch = [(eid, f) for eid, f in DATA_STORE[k][0].entries if int(eid.split("-")[0]) > bms or (int(eid.split("-")[0]) == bms and int(eid.split("-")[1]) > bseq)]
+                                            if mtch: res_st.append((k, mtch))
+                                    return res_st
+
+                                initial = fetch_stream()
+                                if initial: target_conn.sendall(format_xread(initial).encode())
+                                elif block_ms >= 0:
+                                    bel = threading.Event()
+                                    with BLOCK_LOCK:
+                                        for k, bid in zip(ks, ids):
+                                            if k not in STREAM_BLOCKING_CLIENTS: STREAM_BLOCKING_CLIENTS[k] = []
+                                            STREAM_BLOCKING_CLIENTS[k].append((bel, bid))
+                                    woke = bel.wait(block_ms/1000.0) if block_ms > 0 else (bel.wait() or True)
+                                    with BLOCK_LOCK:
+                                        for k in ks:
+                                            if k in STREAM_BLOCKING_CLIENTS: STREAM_BLOCKING_CLIENTS[k] = [x for x in STREAM_BLOCKING_CLIENTS[k] if x[0] != bel]
+                                    final = fetch_stream() if woke else None
+                                    target_conn.sendall(format_xread(final).encode() if final else b"*-1\r\n")
+                                else: target_conn.sendall(b"*-1\r\n")
+                            except: target_conn.sendall(b"*-1\r\n")
+
+                        elif c in ["RPUSH", "LPUSH"]:
+                            key, items = p[1], p[2:]
+                            if c == "LPUSH": items = list(reversed(items))
+                            if key in DATA_STORE and isinstance(DATA_STORE[key][0], list):
+                                l, ex = DATA_STORE[key]
+                                if c == "RPUSH": l.extend(items)
+                                else: l = items + l
+                                DATA_STORE[key] = (l, ex)
+                            else: DATA_STORE[key] = (items, None)
+                            target_conn.sendall(f":{len(DATA_STORE[key][0])}\r\n".encode())
+                            with BLOCK_LOCK:
+                                while key in BLOCKING_CLIENTS and BLOCKING_CLIENTS[key] and DATA_STORE[key][0]:
+                                    it = DATA_STORE[key][0].pop(0)
+                                    bl, box = BLOCKING_CLIENTS[key].pop(0)
+                                    box.append(it)
+                                    bl.set()
+
+                        elif c == "LRANGE":
+                            key, start, stop = p[1], int(p[2]), int(p[3])
+                            if key in DATA_STORE and isinstance(DATA_STORE[key][0], list):
+                                l = DATA_STORE[key][0]
+                                if start < 0: start += len(l)
+                                if stop < 0: stop += len(l)
+                                slc = l[max(0, start):stop+1]
+                                o = f"*{len(slc)}\r\n"
+                                for x in slc: o += f"${len(x)}\r\n{x}\r\n"
+                                target_conn.sendall(o.encode())
+                            else: target_conn.sendall(b"*0\r\n")
+
+                        elif c == "LPOP":
+                            key = p[1]
+                            cnt = int(p[2]) if len(p) > 2 else None
+                            if key in DATA_STORE and isinstance(DATA_STORE[key][0], list) and DATA_STORE[key][0]:
+                                l, ex = DATA_STORE[key]
+                                if cnt:
+                                    tkn, rem = l[:cnt], l[cnt:]
+                                    DATA_STORE[key] = (rem, ex)
+                                    o = f"*{len(tkn)}\r\n"
+                                    for x in tkn: o += f"${len(x)}\r\n{x}\r\n"
+                                    target_conn.sendall(o.encode())
+                                else:
+                                    it = l.pop(0)
+                                    target_conn.sendall(f"${len(it)}\r\n{it}\r\n".encode())
+                            else: target_conn.sendall(b"$-1\r\n")
+
+                    except Exception as e:
+                        target_conn.sendall(f"-ERR {str(e)}\r\n".encode())
+
+                    if is_exec_mode:
+                        exec_responses.append(proxy.buf)
+
+                # Hasil akhir EXEC
+                if is_exec_mode:
+                    packet = f"*{len(exec_responses)}\r\n".encode()
+                    for r in exec_responses: packet += r
+                    connection.sendall(packet)
 
     except Exception:
         pass
     finally:
         connection.close()
 
+def format_xread(data):
+    o = f"*{len(data)}\r\n"
+    for k, ents in data:
+        o += f"*2\r\n${len(k)}\r\n{k}\r\n*{len(ents)}\r\n"
+        for eid, flds in ents:
+            o += f"*2\r\n${len(eid)}\r\n{eid}\r\n*{len(flds)*2}\r\n"
+            for fk, fv in flds.items(): o += f"${len(fk)}\r\n{fk}\r\n${len(fv)}\r\n{fv}\r\n"
+    return o
+
 def main():
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+    server = socket.create_server(("localhost", 6379), reuse_port=True)
     while True:
-        connection, _ = server_socket.accept()
-        threading.Thread(target=handle_client, args=(connection,)).start()
+        conn, _ = server.accept()
+        threading.Thread(target=handle_client, args=(conn,)).start()
 
 if __name__ == "__main__":
     main()
