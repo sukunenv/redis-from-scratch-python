@@ -17,6 +17,8 @@ STREAM_BLOCKING_CLIENTS = {}
 
 # Konfigurasi Replication
 ROLE = "master"
+MASTER_REPLID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+MASTER_REPL_OFFSET = 0
 
 class Stream:
     def __init__(self):

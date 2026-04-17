@@ -20,7 +20,12 @@ def execute_command(cmd_p, target):
             # Memberikan info statistik (tahap awal: replication)
             section = arg(1)
             if section and section.lower() == "replication":
-                res = f"role:{store.ROLE}"
+                lines = [
+                    f"role:{store.ROLE}",
+                    f"master_replid:{store.MASTER_REPLID}",
+                    f"master_repl_offset:{store.MASTER_REPL_OFFSET}"
+                ]
+                res = "\r\n".join(lines)
                 target.sendall(f"${len(res)}\r\n{res}\r\n".encode())
             else: target.sendall(b"$-1\r\n")
 
