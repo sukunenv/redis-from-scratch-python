@@ -1,6 +1,7 @@
 import socket
 import threading
 import time
+import sys
 
 # Gudang penyimpanan data utama (Memory)
 DATA_STORE = {}
@@ -411,9 +412,19 @@ def handle_client(connection):
     finally: connection.close()
 
 def main():
-    s = socket.create_server(("localhost", 6379), reuse_port=True)
+    # Mendukung argumen port (misal: --port 6380)
+    port = 6379
+    if "--port" in sys.argv:
+        try:
+            port = int(sys.argv[sys.argv.index("--port") + 1])
+        except (ValueError, IndexError):
+            pass
+
+    # Inisialisasi server Redis
+    s = socket.create_server(("localhost", port), reuse_port=True)
     while True:
         c, _ = s.accept()
+        # Layani setiap klien di thread terpisah agar tidak saling menunggu
         threading.Thread(target=handle_client, args=(c,)).start()
 
 if __name__ == "__main__": main()
