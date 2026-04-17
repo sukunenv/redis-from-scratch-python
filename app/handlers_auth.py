@@ -13,9 +13,9 @@ def handle_auth(c, cmd_p, target, session):
             return True
         elif subcommand == "GETUSER":
             # Format: ACL GETUSER username
-            # Tambahkan stiker "nopass" ke dalam Array flags
-            # RESP: *2\r\n$5\r\nflags\r\n*1\r\n$6\r\nnopass\r\n
-            target.sendall(b"*2\r\n$5\r\nflags\r\n*1\r\n$6\r\nnopass\r\n")
+            # Tambahkan properti "passwords" berupa Array kosong
+            # RESP: *4\r\n$5\r\nflags\r\n*1\r\n$6\r\nnopass\r\n$9\r\npasswords\r\n*0\r\n
+            target.sendall(b"*4\r\n$5\r\nflags\r\n*1\r\n$6\r\nnopass\r\n$9\r\npasswords\r\n*0\r\n")
             return True
 
     return False
