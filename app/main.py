@@ -249,6 +249,66 @@ def handle_client(connection):
                     # Gagal karena melanggar aturan ke-2
                     connection.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
 
+            # ─────────────────────────────────────────
+            # PERINTAH: XRANGE → Mengambil data dari Stream dalam rentang tertentu
+            # ─────────────────────────────────────────
+            elif command == "XRANGE":
+                # XRANGE <key> <start> <end>
+                key = parts[4]
+                start_id = parts[6]
+                end_id = parts[8]
+
+                # --- 1. Terjemahkan Batas Awal (Start) ---
+                if "-" in start_id:
+                    start_ms, start_seq = map(int, start_id.split("-"))
+                else:
+                    # Jika tidak ada nomor urut, batas bawah otomatis dimulai dari 0
+                    start_ms = int(start_id)
+                    start_seq = 0
+                
+                # --- 2. Terjemahkan Batas Akhir (End) ---
+                if "-" in end_id:
+                    end_ms, end_seq = map(int, end_id.split("-"))
+                else:
+                    # Jika tidak ada nomor urut, batas atas dianggap tak terhingga (infinity)
+                    end_ms = int(end_id)
+                    end_seq = float('inf')
+
+                # Siapkan daftar untuk menampung hasil
+                results = []
+
+                # Cek apakah streamnya ada di gudang
+                if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream):
+                    stream = DATA_STORE[key][0]
+                    # Loop semua data di dalam stream tersebut
+                    for entry_id, fields in stream.entries:
+                        entry_ms, entry_seq = map(int, entry_id.split("-"))
+
+                        # Cek apakah data ini masuk batas bawah (>= start)
+                        valid_start = (entry_ms > start_ms) or (entry_ms == start_ms and entry_seq >= start_seq)
+                        
+                        # Cek apakah data ini masuk batas atas (<= end)
+                        valid_end = (entry_ms < end_ms) or (entry_ms == end_ms and entry_seq <= end_seq)
+
+                        # Kalau masuk dua-duanya, simpan ke hasil!
+                        if valid_start and valid_end:
+                            results.append((entry_id, fields))
+                
+                # --- 3. Balas ke Klien (Berbentuk Nested Array) ---
+                response = f"*{len(results)}\r\n"
+                for entry_id, fields in results:
+                    response += "*2\r\n" # Setiap entri terdiri dari 2 bagian: ID dan datanya
+                    response += f"${len(entry_id)}\r\n{entry_id}\r\n"
+                    
+                    # Jumlah elemen di array data adalah jumlah pasangan dikali 2 (kunci dan nilai)
+                    response += f"*{len(fields) * 2}\r\n"
+                    for f_key, f_val in fields.items():
+                        response += f"${len(f_key)}\r\n{f_key}\r\n"
+                        response += f"${len(f_val)}\r\n{f_val}\r\n"
+                
+                connection.sendall(response.encode())
+
+
 
             # ─────────────────────────────────────────
             # PERINTAH: RPUSH → Memasukkan elemen ke BELAKANG daftar
