@@ -11,5 +11,11 @@ def main():
     connection, _ = server_socket.accept() 
     connection.sendall(b"+PONG\r\n")
 
+     while True:
+        data = connection.recv(1024)
+        if not data:
+            break
+        connection.sendall(b"+PONG\r\n")
+
 if __name__ == "__main__":
     main()
