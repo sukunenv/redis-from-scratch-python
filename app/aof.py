@@ -77,3 +77,57 @@ def replay_aof():
             
     except Exception as e:
         print(f"Error replaying AOF: {e}")
+
+def rewrite_aof():
+    """
+    Performs an AOF Rewrite (compaction).
+    It generates a minimal set of commands to rebuild the current DATA_STORE state.
+    """
+    if not store.AOF_PATH:
+        return False
+    
+    temp_path = f"{store.AOF_PATH}.tmp"
+    try:
+        with open(temp_path, "wb") as f:
+            # Snapshot the current data store
+            # In a real Redis, this would be a fork()ed child process
+            with store.BLOCK_LOCK:
+                current_data = list(store.DATA_STORE.items())
+            
+            for key, (val, expiry) in current_data:
+                # 1. Write the SET command for the value
+                # This version handles Strings and Lists
+                if isinstance(val, (str, bytes)):
+                    cmd = ["SET", key, str(val)]
+                elif isinstance(val, list):
+                    cmd = ["RPUSH", key] + val
+                else:
+                    # Skip other complex types for now
+                    continue
+                
+                # Format to RESP
+                resp = f"*{len(cmd)}\r\n"
+                for part in cmd:
+                    resp += f"${len(str(part))}\r\n{part}\r\n"
+                f.write(resp.encode())
+                
+                # 2. Write PEXPIREAT if the key has an expiry
+                if expiry:
+                    exp_cmd = ["PEXPIREAT", key, str(int(expiry * 1000))]
+                    resp_exp = f"*{len(exp_cmd)}\r\n"
+                    for part in exp_cmd:
+                        resp_exp += f"${len(str(part))}\r\n{part}\r\n"
+                    f.write(resp_exp.encode())
+            
+            f.flush()
+            os.fsync(f.fileno())
+            
+        # Atomic swap: Replace old AOF with the compacted one
+        os.replace(temp_path, store.AOF_PATH)
+        return True
+    except Exception as e:
+        print(f"Error during AOF rewrite: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return False
+

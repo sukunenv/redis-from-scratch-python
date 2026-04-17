@@ -1,6 +1,7 @@
 # Build Your Own Redis (Python)
 
 ![Project Banner](assets/banner.png)
+![Project Demo](assets/Python_Loop.gif)
 
 This repository contains a high-performance, concurrent, and persistent Redis-compatible server built from scratch using Python. This project was developed as part of a deep-dive into network programming, data structures, and storage engines.
 
@@ -18,6 +19,8 @@ This is my implementation of the "Build Your Own Redis" challenge. It's a journe
 - **Persistence**:
   - **RDB (Redis Database File)**: Loading data from periodic snapshots.
   - **AOF (Append Only File)**: Durable command logging with `fsync always` support and automatic replay on startup.
+  - **AOF Rewrite (Bonus)**: Background compaction via `BGREWRITEAOF` to optimize storage usage.
+
 - **Concurrency & Transactions**:
   - Multi-threaded connection handling.
   - Full support for `MULTI`, `EXEC`, `DISCARD`, and optimistic locking via `WATCH`/`UNWATCH`.

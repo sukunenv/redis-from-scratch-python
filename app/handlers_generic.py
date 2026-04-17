@@ -22,7 +22,19 @@ def handle_generic(cmd_name, cmd_parts, target, session=None):
             target.sendall(res.encode())
         return True
 
+    elif cmd_name == "BGREWRITEAOF":
+        import threading
+        from app.aof import rewrite_aof
+        
+        def run_rewrite():
+            rewrite_aof()
+            
+        threading.Thread(target=run_rewrite, daemon=True).start()
+        target.sendall(b"+Background rewriting of AOF started\r\n")
+        return True
+
     elif cmd_name == "COMMAND":
+
         # Basic response for redis-cli metadata discovery
         target.sendall(b"*0\r\n")
         return True
