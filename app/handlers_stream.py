@@ -2,7 +2,7 @@ import time
 import app.store as store
 from app.protocol import format_xread_data
 
-def handle_stream(cmd_name, cmd_parts, target):
+def handle_stream(cmd_name, cmd_parts, target, session=None):
     """Handles Redis Stream commands: XADD, XRANGE, XREAD, XGROUP, XREADGROUP, XACK."""
     from app.replication import propagate_command
     def arg(idx): return cmd_parts[idx] if idx < len(cmd_parts) else None

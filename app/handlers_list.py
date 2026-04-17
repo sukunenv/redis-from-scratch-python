@@ -1,7 +1,7 @@
 import time
 import app.store as store
 
-def handle_list(cmd_name, cmd_parts, target):
+def handle_list(cmd_name, cmd_parts, target, session=None):
     """Handles Redis List commands: LPUSH, RPUSH, LLEN, LRANGE, LINDEX, BLPOP, BRPOP."""
     from app.replication import propagate_command
     def arg(idx): return cmd_parts[idx] if idx < len(cmd_parts) else None
