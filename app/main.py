@@ -236,11 +236,17 @@ def handle_client(connection):
                 connection.sendall(response.encode())
 
             # ─────────────────────────────────────────
-            # PERINTAH: LPOP → Ambil dan hapus elemen PERTAMA dari daftar
+            # PERINTAH: LPOP → Ambil dan hapus elemen dari DEPAN daftar
             # ─────────────────────────────────────────
             elif command == "LPOP":
-                # LPOP <kunci>
-                key = parts[4]  # Nama daftar yang mau diambil elemen pertamanya
+                # LPOP <kunci> [jumlah]
+                key = parts[4]  # Nama daftar yang mau diambil elemennya
+
+                # Cek apakah ada argumen jumlah (opsional)
+                # Kalau parts cukup panjang (ada index ke-6), berarti ada angka jumlah
+                count = None
+                if len(parts) > 6 and parts[5].startswith("$"):
+                    count = int(parts[6])  # Berapa banyak elemen yang mau diambil
 
                 # Cek apakah kunci ada di gudang
                 if key in DATA_STORE:
@@ -248,14 +254,27 @@ def handle_client(connection):
 
                     # Pastikan isinya adalah list dan tidak kosong
                     if isinstance(data_lama, list) and len(data_lama) > 0:
-                        # .pop(0) = ambil sekaligus hapus elemen di posisi pertama (index 0)
-                        elemen_pertama = data_lama.pop(0)
 
-                        # Simpan kembali daftar yang sudah berkurang satu ke gudang
-                        DATA_STORE[key] = (data_lama, expiry)
+                        if count is not None:
+                            # === Mode BANYAK: ambil beberapa elemen dari depan ===
+                            # Potong daftar: ambil 'count' elemen pertama
+                            diambil = data_lama[:count]
+                            # Sisanya disimpan kembali ke gudang
+                            sisa = data_lama[count:]
+                            DATA_STORE[key] = (sisa, expiry)
 
-                        # Balas dengan elemen yang diambil dalam format Bulk String
-                        response = f"${len(elemen_pertama)}\r\n{elemen_pertama}\r\n"
+                            # Susun jawaban sebagai Array RESP (*jumlah\r\n)
+                            response = f"*{len(diambil)}\r\n"
+                            for item in diambil:
+                                response += f"${len(item)}\r\n{item}\r\n"
+                        else:
+                            # === Mode SATU: ambil 1 elemen pertama saja ===
+                            # .pop(0) = ambil sekaligus hapus elemen di posisi pertama
+                            elemen_pertama = data_lama.pop(0)
+                            DATA_STORE[key] = (data_lama, expiry)
+
+                            # Balas dengan elemen tunggal dalam format Bulk String
+                            response = f"${len(elemen_pertama)}\r\n{elemen_pertama}\r\n"
                     else:
                         # Daftar kosong atau bukan list, balas dengan null
                         response = "$-1\r\n"
@@ -264,6 +283,7 @@ def handle_client(connection):
                     response = "$-1\r\n"
 
                 connection.sendall(response.encode())
+
 
 
     except Exception:
