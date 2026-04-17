@@ -65,29 +65,29 @@ def handle_client(connection):
                 connection.sendall(response.encode())
                 
             elif command == "RPUSH":
-                # RPUSH <kunci> <elemen>
+                # RPUSH <kunci> <elemen1> <elemen2> ...
                 key = parts[4]
-                element = parts[6]
+                
+                # Kita buat daftar kosong untuk menampung elemen-elemen baru
+                elemen_baru = []
+                # Mulai dari index 6, lompat 2 langkah setiap kali (karena ada $panjang di antaranya)
+                for i in range(6, len(parts) - 1, 2):
+                    elemen_baru.append(parts[i])
                 
                 # Cek apakah kunci sudah ada di gudang
                 if key in DATA_STORE:
-                    # Ambil data lama dan waktu kedaluwarsanya
                     data_lama, expiry = DATA_STORE[key]
-                    
-                    # Pastikan data lama itu bentuknya list (daftar)
                     if isinstance(data_lama, list):
-                        data_lama.append(element)
+                        # Tambahkan semua elemen baru ke daftar lama
+                        data_lama.extend(elemen_baru)
                         jumlah = len(data_lama)
                     else:
-                        # Jika sebelumnya ternyata bukan list (misal dari SET), kita ganti jadi list
-                        DATA_STORE[key] = ([element], None)
-                        jumlah = 1
+                        DATA_STORE[key] = (elemen_baru, None)
+                        jumlah = len(elemen_baru)
                 else:
-                    # Jika kunci belum ada, buat daftar baru
-                    DATA_STORE[key] = ([element], None)
-                    jumlah = 1
+                    DATA_STORE[key] = (elemen_baru, None)
+                    jumlah = len(elemen_baru)
                 
-                # Balas dengan jumlah elemen terbaru (:jumlah\r\n)
                 response = f":{jumlah}\r\n"
                 connection.sendall(response.encode())
                 
