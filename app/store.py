@@ -46,6 +46,7 @@ CONFIG = {
     "appendfilename": "appendonly.aof",
     "appendfsync": "everysec"
 }
+AOF_PATH = None
 
 class SortedSet:
     def __init__(self):

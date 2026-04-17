@@ -31,6 +31,12 @@ def execute_command(cmd_p, target, session=None):
         if session is not None and session.get("authenticated_user") is None and c != "AUTH":
             target.sendall(b"-NOAUTH Authentication required.\r\n")
             return
+
+        # Pencatatan AOF (Tukang Catat): Rekam perintah yang mengubah data
+        WRITE_COMMANDS = {"SET", "DEL", "HSET", "XADD", "ZADD", "GEOADD", "INCR", "EXPIRE", "PEXPIRE", "HDEL"}
+        if c in WRITE_COMMANDS and store.CONFIG.get("appendonly") == "yes":
+            from app.aof import append_to_aof
+            append_to_aof(cmd_p)
             
         def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
 

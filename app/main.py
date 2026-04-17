@@ -23,10 +23,11 @@ if _appendonly.strip().lower() == "yes":
     if not os.path.exists(_aof_filepath):
         open(_aof_filepath, 'a').close()
         
-    # Bikin file manifest
+    # Bikin file manifest (HANYA jika belum ada)
     _manifest_filepath = os.path.join(_aof_dir, f"{_appendfilename}.manifest")
-    with open(_manifest_filepath, "w") as f:
-        f.write(f"file {_aof_filename} seq 1 type i\n")
+    if not os.path.exists(_manifest_filepath):
+        with open(_manifest_filepath, "w") as f:
+            f.write(f"file {_aof_filename} seq 1 type i\n")
 
 import socket
 import threading
@@ -147,6 +148,7 @@ def handle_client(connection):
 
 from app.replication import initiate_handshake
 from app.rdb import load_rdb
+from app.aof import init_aof
 
 def main():
     # Mendukung argumen konfigurasi RDB & AOF
@@ -158,6 +160,9 @@ def main():
 
     # MUAT DATA DARI RDB: Baca database dari file jika ada
     load_rdb()
+
+    # Inisialisasi AOF (mencari file aktif dari manifest)
+    init_aof()
 
     # Mendukung argumen port (misal: --port 6380)
     port = 6379
