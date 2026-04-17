@@ -80,8 +80,11 @@ def handle_client(connection):
 
                 # Jika MULTI aktif, masukkan perintah ke antrean (kecuali EXEC/DISCARD)
                 if is_transaction_active and cmd_name not in ["EXEC", "DISCARD"]:
-                    transaction_queue.append(p)
-                    connection.sendall(b"+QUEUED\r\n")
+                    if cmd_name == "WATCH":
+                        connection.sendall(b"-ERR WATCH inside MULTI is not allowed\r\n")
+                    else:
+                        transaction_queue.append(p)
+                        connection.sendall(b"+QUEUED\r\n")
                     continue
 
                 to_run = []
