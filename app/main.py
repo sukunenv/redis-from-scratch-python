@@ -142,11 +142,14 @@ def initiate_handshake(master_host, master_port, my_port):
             for c_cmd in cmds:
                 if not c_cmd: continue
                 
-                # Jalankan perintah tapi jangan kirim balik jawaban ke Master
-                class SilentProxy:
-                    def sendall(self, d): pass
+                # Jalankan perintah: 
+                # Slave tetap diam untuk SET/PING, tapi WAJIB jawab untuk REPLCONF ACK
+                class ReplicationProxy:
+                    def sendall(self, d):
+                        if b"REPLCONF" in d and b"ACK" in d:
+                            master_conn.sendall(d)
                 
-                execute_command(c_cmd, SilentProxy())
+                execute_command(c_cmd, ReplicationProxy())
 
     except Exception as e:
         print(f"Gagal jabat tangan atau koneksi Master terputus: {e}")

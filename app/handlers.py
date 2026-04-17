@@ -46,8 +46,13 @@ def execute_command(cmd_p, target):
             else: target.sendall(b"$-1\r\n")
 
         elif c == "REPLCONF":
-            # Perintah konfigurasi replikasi (Master cukup jawab OK)
-            target.sendall(b"+OK\r\n")
+            # Perintah konfigurasi replikasi
+            if arg(1) and arg(1).upper() == "GETACK":
+                # Jika diminta ACK oleh Master, Slave menjawab dengan offset (saat ini 0)
+                target.sendall(b"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n")
+            else:
+                # Master cukup menjawab OK untuk konfigurasi awal
+                target.sendall(b"+OK\r\n")
 
         elif c == "PSYNC":
             # 1. Jawab dengan FULLRESYNC
