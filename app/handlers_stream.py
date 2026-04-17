@@ -89,7 +89,7 @@ def handle_stream(c, cmd_p, target):
                 if block_ms > 0 and (time.time() - start_wait) * 1000 > block_ms: break
                 time.sleep(0.1); results = get_results()
         
-        if not results: target.sendall(b"$-1\r\n")
+        if not results: target.sendall(b"*-1\r\n")
         else: target.sendall(format_xread_data(results).encode())
         return True
     
