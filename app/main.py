@@ -132,8 +132,9 @@ def handle_client(connection):
                     # Balas klien dengan angka barunya
                     response = f":{angka}\r\n"
                 else:
-                    # Akan kita kerjakan di tahap selanjutnya
-                    response = "-ERR\r\n" 
+                    # Jika kunci belum ada, buat baru dengan nilai 1
+                    DATA_STORE[key] = ("1", None)
+                    response = ":1\r\n" 
                 
                 connection.sendall(response.encode())
 
