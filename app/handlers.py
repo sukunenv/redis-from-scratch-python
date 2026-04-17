@@ -21,8 +21,17 @@ def execute_command(cmd_p, target):
             # Menampilkan kunci yang cocok dengan pola (saat ini hanya mendukung '*')
             pattern = arg(1)
             if pattern == "*":
-                all_keys = list(store.DATA_STORE.keys())
-                # Format RESP: Array berisi semua nama kunci
+                all_keys = []
+                now = time.time()
+                # Kita cek satu per satu, hapus yang sudah basi
+                with store.BLOCK_LOCK:
+                    for k, (v, exp) in list(store.DATA_STORE.items()):
+                        if exp and now > exp:
+                            del store.DATA_STORE[k]
+                        else:
+                            all_keys.append(k)
+                
+                # Format RESP: Array berisi semua nama kunci yang aktif
                 res = f"*{len(all_keys)}\r\n"
                 for k in all_keys:
                     res += f"${len(k)}\r\n{k}\r\n"
