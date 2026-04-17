@@ -112,6 +112,32 @@ def handle_client(connection):
                 connection.sendall(response.encode())
 
             # ─────────────────────────────────────────
+            # PERINTAH: INCR → Menambahkan nilai angka sebanyak 1
+            # ─────────────────────────────────────────
+            elif command == "INCR":
+                # INCR <kunci>
+                key = parts[4]
+
+                # Tahap ini hanya fokus pada kasus di mana kunci sudah ada.
+                if key in DATA_STORE:
+                    value, expiry_time = DATA_STORE[key]
+                    
+                    # Kita asumsikan isinya adalah angka yang disimpan dalam bentuk string
+                    angka = int(value)
+                    angka += 1
+                    
+                    # Simpan kembali ke gudang
+                    DATA_STORE[key] = (str(angka), expiry_time)
+                    
+                    # Balas klien dengan angka barunya
+                    response = f":{angka}\r\n"
+                else:
+                    # Akan kita kerjakan di tahap selanjutnya
+                    response = "-ERR\r\n" 
+                
+                connection.sendall(response.encode())
+
+            # ─────────────────────────────────────────
             # PERINTAH: TYPE → Mengecek jenis data (string, list, dll) dari sebuah kunci
             # ─────────────────────────────────────────
             elif command == "TYPE":
