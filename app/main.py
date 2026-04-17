@@ -15,7 +15,6 @@ BLOCKING_CLIENTS = {}
 STREAM_BLOCKING_CLIENTS = {}
 
 def format_xread_data(data):
-    """Format data Stream ke Array RESP untuk XREAD"""
     if not data: return "*-1\r\n"
     o = f"*{len(data)}\r\n"
     for k, ents in data:
@@ -26,7 +25,6 @@ def format_xread_data(data):
     return o
 
 def parse_resp(data):
-    """Parser RESP yang lebih aman"""
     if not data: return []
     try:
         lines = data.decode().split("\r\n")
@@ -52,8 +50,7 @@ def parse_resp(data):
                     commands.append(cmd_parts)
             except (ValueError, IndexError):
                 i += 1
-        else:
-            i += 1
+        else: i += 1
     return commands
 
 def handle_client(connection):
@@ -69,10 +66,9 @@ def handle_client(connection):
             for p in all_cmds:
                 if not p: continue
                 
-                command = p[0].upper()
+                cmd_name = p[0].upper()
 
-                # --- Handle MULTI/EXEC/DISCARD ---
-                if is_transaction_active and command not in ["EXEC", "DISCARD"]:
+                if is_transaction_active and cmd_name not in ["EXEC", "DISCARD"]:
                     transaction_queue.append(p)
                     connection.sendall(b"+QUEUED\r\n")
                     continue
@@ -80,11 +76,11 @@ def handle_client(connection):
                 to_run = []
                 is_exec = False
 
-                if command == "MULTI":
+                if cmd_name == "MULTI":
                     is_transaction_active = True
                     connection.sendall(b"+OK\r\n")
                     continue
-                elif command == "DISCARD":
+                elif cmd_name == "DISCARD":
                     if not is_transaction_active:
                         connection.sendall(b"-ERR DISCARD without MULTI\r\n")
                     else:
@@ -92,7 +88,7 @@ def handle_client(connection):
                         transaction_queue = []
                         connection.sendall(b"+OK\r\n")
                     continue
-                elif command == "EXEC":
+                elif cmd_name == "EXEC":
                     if not is_transaction_active:
                         connection.sendall(b"-ERR EXEC without MULTI\r\n")
                         continue
@@ -116,7 +112,6 @@ def handle_client(connection):
 
                     try:
                         c = cmd_p[0].upper()
-                        # Helper untuk ambil argumen aman
                         def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
 
                         if c == "PING":
@@ -171,7 +166,7 @@ def handle_client(connection):
                                     target.sendall(b"+none\r\n")
                                 else:
                                     if isinstance(v, str): target.sendall(b"+string\r\n")
-                                    elif isinstance(v, list): target_conn.sendall(b"+list\r\n")
+                                    elif isinstance(v, list): target.sendall(b"+list\r\n")
                                     elif isinstance(v, Stream): target.sendall(b"+stream\r\n")
                                     else: target.sendall(b"+none\r\n")
 
@@ -320,6 +315,24 @@ def handle_client(connection):
                                     it = l.pop(0)
                                     target.sendall(f"${len(it)}\r\n{it}\r\n".encode())
                             else: target.sendall(b"$-1\r\n")
+
+                        elif c == "BLPOP":
+                            k, t_out = arg(1), float(arg(2))
+                            wait_bel, wait_box = None, []
+                            with BLOCK_LOCK:
+                                if k in DATA_STORE and isinstance(DATA_STORE[k][0], list) and DATA_STORE[k][0]:
+                                    it = DATA_STORE[k][0].pop(0)
+                                    target.sendall(f"*2\r\n${len(k)}\r\n{k}\r\n${len(it)}\r\n{it}\r\n".encode())
+                                else:
+                                    wait_bel = threading.Event()
+                                    if k not in BLOCKING_CLIENTS: BLOCKING_CLIENTS[k] = []
+                                    BLOCKING_CLIENTS[k].append((wait_bel, wait_box))
+                            
+                            if wait_bel:
+                                w = wait_bel.wait(t_out) if t_out > 0 else (wait_bel.wait() or True)
+                                with BLOCK_LOCK:
+                                    if k in BLOCKING_CLIENTS: BLOCKING_CLIENTS[k] = [x for x in BLOCKING_CLIENTS[k] if x[0] != wait_bel]
+                                target.sendall(f"*2\r\n${len(k)}\r\n{k}\r\n${len(wait_box[0])}\r\n{wait_box[0]}\r\n".encode() if wait_box else b"*-1\r\n")
 
                     except Exception as e:
                         target.sendall(f"-ERR {str(e)}\r\n".encode())
