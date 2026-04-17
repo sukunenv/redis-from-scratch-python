@@ -3,30 +3,12 @@ import threading
 import app.store as store
 from app.protocol import format_xread_data
 
-def propagate_command(cmd_p):
-    """Mengirimkan perintah tulis ke semua Slave yang terhubung"""
-    # HANYA MASTER yang boleh melakukan propagasi
-    if store.ROLE != "master": return
-    if not store.REPLICAS: return
-    # Format ulang perintah list menjadi RESP Array biner
-    res = f"*{len(cmd_p)}\r\n"
-    for arg in cmd_p:
-        res += f"${len(str(arg))}\r\n{arg}\r\n"
-    data = res.encode()
-    # Hitung panjang perintah ini dan tambahkan ke offset Master
-    store.MASTER_REPL_OFFSET += len(data)
-    
-    # Kirim ke semua Slave yang terdaftar secara aman
-    with store.BLOCK_LOCK:
-        for replica in store.REPLICAS:
-            try: replica.sendall(data)
-            except: pass
-
 def execute_command(cmd_p, target):
     """
     Eksekutor Perintah: Di sinilah otak dari setiap perintah Redis berada.
     Setiap blok 'elif' menangani satu jenis perintah spesifik.
     """
+    from app.replication import propagate_command
     try:
         c = cmd_p[0].upper()
         # Fungsi pembantu untuk mengambil argumen secara aman
