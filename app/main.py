@@ -6,6 +6,17 @@ import time       # Alat untuk melihat jam/waktu sekarang (dipakai untuk fitur k
 # Isinya: { "kunci": (nilai, waktu_basi) }
 DATA_STORE = {}
 
+# === Peralatan baru untuk BLPOP (Blocking) ===
+# BLOCK_LOCK = Kunci gembok. Sebelum mengecek/mengubah antrean tunggu, kita harus gembok dulu
+# supaya dua thread tidak saling tabrakan.
+BLOCK_LOCK = threading.Lock()
+
+# BLOCKING_CLIENTS = Antrean orang yang sedang MENUNGGU barang di sebuah daftar.
+# Bentuknya: { "nama_daftar": [(bel_1, kotak_hasil_1), (bel_2, kotak_hasil_2), ...] }
+# - "bel" (Event) = alat untuk memberi tahu klien bahwa barangnya sudah datang
+# - "kotak_hasil" (list) = tempat meletakkan barang yang sudah diambil
+BLOCKING_CLIENTS = {}
+
 
 def handle_client(connection):
     # Fungsi ini dijalankan untuk setiap klien yang terhubung
@@ -118,7 +129,36 @@ def handle_client(connection):
                     DATA_STORE[key] = (elemen_baru, None)
                     jumlah = len(elemen_baru)
 
-                # Balas dengan total jumlah elemen dalam format Integer (:jumlah\r\n)
+                # === BARU: Setelah memasukkan barang, cek apakah ada orang yang menunggu ===
+                # Gembok dulu supaya aman (tidak ada thread lain yang ikut mengubah antrean)
+                with BLOCK_LOCK:
+                    # Selama masih ada orang yang menunggu DAN daftar masih ada isinya...
+                    while key in BLOCKING_CLIENTS and BLOCKING_CLIENTS[key]:
+                        # Ambil data terbaru dari gudang
+                        data, exp = DATA_STORE[key]
+                        if isinstance(data, list) and len(data) > 0:
+                            # Ambil elemen pertama dari daftar untuk diberikan ke orang yang menunggu
+                            elemen = data.pop(0)
+                            DATA_STORE[key] = (data, exp)
+
+                            # Ambil orang pertama di antrean tunggu (yang paling lama menunggu)
+                            bel, kotak_hasil = BLOCKING_CLIENTS[key].pop(0)
+                            # Taruh barangnya di kotak hasil milik orang itu
+                            kotak_hasil.append(elemen)
+                            # Bunyikan bel! "Barangmu sudah datang!"
+                            bel.set()
+
+                            # Kurangi jumlah karena 1 elemen sudah diberikan ke klien yang menunggu
+                            jumlah -= 1
+                        else:
+                            # Daftar sudah habis, berhenti membagikan
+                            break
+
+                    # Bersihkan antrean kosong
+                    if key in BLOCKING_CLIENTS and not BLOCKING_CLIENTS[key]:
+                        del BLOCKING_CLIENTS[key]
+
+                # Balas dengan total jumlah elemen TERSISA dalam format Integer (:jumlah\r\n)
                 response = f":{jumlah}\r\n"
                 connection.sendall(response.encode())
 
@@ -178,27 +218,22 @@ def handle_client(connection):
                         panjang = len(data_lama)  # Hitung panjang daftar
 
                         # Ubah index negatif menjadi positif (dihitung dari belakang)
-                        # Contoh: -1 pada daftar 5 elemen → 5 + (-1) = 4 (index terakhir)
                         if start < 0:
                             start = panjang + start
                         if stop < 0:
                             stop = panjang + stop
 
-                        # Aturan Redis: kalau index masih negatif (terlalu jauh mundur),
-                        # anggap saja mulai dari 0 (paling depan)
+                        # Aturan Redis: kalau index masih negatif, jadikan 0
                         if start < 0:
                             start = 0
                         if stop < 0:
                             stop = 0
 
-                        # Potong daftarnya dari start sampai stop
-                        # (+1 karena Python tidak ikutkan angka terakhir dalam slice)
+                        # Potong daftarnya dari start sampai stop (+1 karena aturan Python)
                         potongan = data_lama[start:stop + 1]
 
-                        # Susun jawaban dengan format Array RESP, awali dengan jumlah elemen
+                        # Susun jawaban dengan format Array RESP
                         response = f"*{len(potongan)}\r\n"
-
-                        # Tambahkan setiap elemen satu per satu ke dalam jawaban
                         for item in potongan:
                             response += f"${len(item)}\r\n{item}\r\n"
                     else:
@@ -243,7 +278,6 @@ def handle_client(connection):
                 key = parts[4]  # Nama daftar yang mau diambil elemennya
 
                 # Cek apakah ada argumen jumlah (opsional)
-                # Kalau parts cukup panjang (ada index ke-6), berarti ada angka jumlah
                 count = None
                 if len(parts) > 6 and parts[5].startswith("$"):
                     count = int(parts[6])  # Berapa banyak elemen yang mau diambil
@@ -257,19 +291,16 @@ def handle_client(connection):
 
                         if count is not None:
                             # === Mode BANYAK: ambil beberapa elemen dari depan ===
-                            # Potong daftar: ambil 'count' elemen pertama
                             diambil = data_lama[:count]
-                            # Sisanya disimpan kembali ke gudang
                             sisa = data_lama[count:]
                             DATA_STORE[key] = (sisa, expiry)
 
-                            # Susun jawaban sebagai Array RESP (*jumlah\r\n)
+                            # Susun jawaban sebagai Array RESP
                             response = f"*{len(diambil)}\r\n"
                             for item in diambil:
                                 response += f"${len(item)}\r\n{item}\r\n"
                         else:
                             # === Mode SATU: ambil 1 elemen pertama saja ===
-                            # .pop(0) = ambil sekaligus hapus elemen di posisi pertama
                             elemen_pertama = data_lama.pop(0)
                             DATA_STORE[key] = (data_lama, expiry)
 
@@ -284,7 +315,63 @@ def handle_client(connection):
 
                 connection.sendall(response.encode())
 
+            # ─────────────────────────────────────────
+            # PERINTAH: BLPOP → MENUNGGU lalu ambil elemen dari DEPAN daftar
+            # Ini seperti LPOP, tapi kalau daftarnya kosong, klien akan MENUNGGU
+            # sampai ada orang lain yang memasukkan barang ke daftar itu.
+            # ─────────────────────────────────────────
+            elif command == "BLPOP":
+                # BLPOP <kunci> <timeout_detik>
+                key = parts[4]         # Nama daftar yang mau ditunggu
+                timeout = int(parts[6])  # Berapa detik mau menunggu (0 = selamanya)
 
+                sudah_dapat = False  # Tanda apakah kita sudah dapat barangnya
+
+                # Gembok dulu sebelum mengecek gudang dan antrean tunggu
+                with BLOCK_LOCK:
+                    # Cek apakah daftar sudah punya isi
+                    if key in DATA_STORE:
+                        data, exp = DATA_STORE[key]
+                        if isinstance(data, list) and len(data) > 0:
+                            # Ada barang! Langsung ambil yang pertama
+                            elemen = data.pop(0)
+                            DATA_STORE[key] = (data, exp)
+                            sudah_dapat = True
+
+                if sudah_dapat:
+                    # Balas langsung dengan Array berisi [nama_daftar, elemen_yang_diambil]
+                    response = f"*2\r\n${len(key)}\r\n{key}\r\n${len(elemen)}\r\n{elemen}\r\n"
+                    connection.sendall(response.encode())
+                else:
+                    # Daftar kosong! Kita harus MENUNGGU...
+                    # Siapkan "bel" dan "kotak hasil" untuk klien ini
+                    bel = threading.Event()    # Bel yang akan dibunyikan saat barang datang
+                    kotak_hasil = []           # Kotak kosong untuk menerima barang nanti
+
+                    # Daftarkan diri ke antrean tunggu (dengan gembok supaya aman)
+                    with BLOCK_LOCK:
+                        if key not in BLOCKING_CLIENTS:
+                            BLOCKING_CLIENTS[key] = []  # Buat antrean baru kalau belum ada
+                        BLOCKING_CLIENTS[key].append((bel, kotak_hasil))  # Masuk antrean
+
+                    # === MENUNGGU DI SINI ===
+                    # Thread ini akan "tidur" sampai bel dibunyikan oleh RPUSH
+                    # (timeout=0 berarti tunggu selamanya, None di Python = tanpa batas waktu)
+                    if timeout == 0:
+                        bel.wait()  # Tunggu selamanya sampai bel berbunyi
+                    else:
+                        bel.wait(timeout=timeout)  # Tunggu maksimal sekian detik
+
+                    # Bel sudah berbunyi! Cek apakah ada barang di kotak hasil
+                    if kotak_hasil:
+                        elemen = kotak_hasil[0]  # Ambil barang dari kotak
+                        # Balas dengan Array berisi [nama_daftar, elemen]
+                        response = f"*2\r\n${len(key)}\r\n{key}\r\n${len(elemen)}\r\n{elemen}\r\n"
+                        connection.sendall(response.encode())
+                    else:
+                        # Waktu habis, tidak ada barang yang datang. Balas null array.
+                        response = "*-1\r\n"
+                        connection.sendall(response.encode())
 
     except Exception:
         # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
