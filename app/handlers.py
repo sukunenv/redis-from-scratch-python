@@ -48,8 +48,8 @@ def execute_command(cmd_p, target):
         elif c == "REPLCONF":
             # Perintah konfigurasi replikasi
             if arg(1) and arg(1).upper() == "GETACK":
-                # Jika diminta ACK oleh Master, Slave menjawab dengan offset (saat ini 0)
-                target.sendall(b"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n")
+                # Slave merespons dengan jumlah byte yang sudah diproses
+                target.sendall(f"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n${len(str(store.REPLICA_OFFSET))}\r\n{store.REPLICA_OFFSET}\r\n".encode())
             else:
                 # Master cukup menjawab OK untuk konfigurasi awal
                 target.sendall(b"+OK\r\n")

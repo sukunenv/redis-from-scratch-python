@@ -25,6 +25,9 @@ EMPTY_RDB_HEX = "524544495330303131fa0972656469732d76657205372e322e34fa0a7265646
 # Daftar koneksi Slave yang aktif (untuk propagasi)
 REPLICAS = []
 
+# Offset khusus untuk Slave (jumlah byte yang diterima dari Master)
+REPLICA_OFFSET = 0
+
 class Stream:
     def __init__(self):
         self.entries = []

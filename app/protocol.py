@@ -1,38 +1,42 @@
 def parse_resp(data):
     """
-    PARSER RESP: Mengubah data mentah dari jaringan menjadi daftar perintah Python.
-    Protokol Redis (RESP) menggunakan awalan seperti '*' untuk array dan '$' untuk teks.
+    PARSER RESP: Mengubah data mentah menjadi daftar (perintah, panjang_byte).
+    Contoh output: [ (["SET", "a", "b"], 31), (["PING"], 14) ]
     """
     if not data: return []
-    try:
-        # Dekode byte menjadi string untuk memudahkan pemrosesan
-        lines = data.decode().split("\r\n")
-    except UnicodeDecodeError: return []
+    results = []
+    cursor = 0
     
-    commands = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if not line:
-            i += 1
-            continue
-        # Perintah selalu dimulai dengan tanda '*' yang diikuti jumlah argumen
-        if line.startswith('*'):
+    while cursor < len(data):
+        start = cursor
+        # Redis RESP Array dimulai dengan '*'
+        if data[cursor:cursor+1] == b'*':
+            end_line = data.find(b"\r\n", cursor)
+            if end_line == -1: break
             try:
-                num_args = int(line[1:])
-                cmd_parts = []
-                i += 1
-                for _ in range(num_args):
-                    if i + 1 < len(lines):
-                        # Lompat melewati tanda '$' dan ambil isinya
-                        cmd_parts.append(lines[i+1])
-                        i += 2
-                if len(cmd_parts) == num_args:
-                    commands.append(cmd_parts)
+                num_elements = int(data[cursor+1:end_line])
+                cursor = end_line + 2
+                cmd = []
+                for _ in range(num_elements):
+                    if data[cursor:cursor+1] != b'$': break
+                    end_line = data.find(b"\r\n", cursor)
+                    if end_line == -1: break
+                    bulk_len = int(data[cursor+1:end_line])
+                    cursor = end_line + 2
+                    val = data[cursor:cursor+bulk_len].decode()
+                    cmd.append(val)
+                    cursor += bulk_len + 2
+                results.append((cmd, cursor - start))
             except (ValueError, IndexError):
-                i += 1
-        else: i += 1
-    return commands
+                break
+        else:
+            # Menangani Simple String atau perintah non-array lainnya
+            end_line = data.find(b"\r\n", cursor)
+            if end_line == -1: break
+            results.append(([data[cursor:end_line].decode()], end_line - cursor + 2))
+            cursor = end_line + 2
+            
+    return results
 
 def format_xread_data(data):
     """

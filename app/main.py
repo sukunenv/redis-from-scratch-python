@@ -23,7 +23,7 @@ def handle_client(connection):
             if not raw_data: break
 
             all_cmds = parse_resp(raw_data)
-            for p in all_cmds:
+            for p, _ in all_cmds:
                 if not p: continue
                 
                 cmd_name = p[0].upper()
@@ -135,11 +135,9 @@ def initiate_handshake(master_host, master_port, my_port):
             data = master_conn.recv(4096)
             if not data: break
             
-            # Terjemahkan perintah dari Master
-            # Catatan: parse_resp kita saat ini berbasis string, 
-            # cukup untuk menangani perintah SET sederhana dari Master.
-            cmds = parse_resp(data)
-            for c_cmd in cmds:
+            # Terjemahkan perintah dari Master dan hitung byte-nya
+            all_cmds = parse_resp(data)
+            for c_cmd, cmd_len in all_cmds:
                 if not c_cmd: continue
                 
                 # Jalankan perintah: 
@@ -150,6 +148,8 @@ def initiate_handshake(master_host, master_port, my_port):
                             master_conn.sendall(d)
                 
                 execute_command(c_cmd, ReplicationProxy())
+                # UPDATE OFFSET: Tambahkan panjang byte perintah ini ke total offset
+                store.REPLICA_OFFSET += cmd_len
 
     except Exception as e:
         print(f"Gagal jabat tangan atau koneksi Master terputus: {e}")
