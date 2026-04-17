@@ -143,6 +143,14 @@ def handle_client(connection):
                 connection.sendall(response.encode())
 
             # ─────────────────────────────────────────
+            # PERINTAH: MULTI → Memulai transaksi (antrean perintah)
+            # ─────────────────────────────────────────
+            elif command == "MULTI":
+                # Untuk tahap ini kita cukup membalas OK.
+                # Fitur antrean (queueing) akan dikerjakan di tahap selanjutnya.
+                connection.sendall(b"+OK\r\n")
+
+            # ─────────────────────────────────────────
             # PERINTAH: TYPE → Mengecek jenis data (string, list, dll) dari sebuah kunci
             # ─────────────────────────────────────────
             elif command == "TYPE":
