@@ -349,7 +349,20 @@ def handle_client(connection):
                 
                 num_streams = len(args) // 2
                 keys = args[:num_streams]
-                ids = args[num_streams:]
+                raw_ids = args[num_streams:]
+
+                # --- 3. Terjemahkan Simbol Dolar ($) ---
+                # Simbol $ berarti "ID terakhir yang ada di stream saat perintah ini dipanggil"
+                ids = []
+                for k, raw_id in zip(keys, raw_ids):
+                    if raw_id == "$":
+                        if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream) and len(DATA_STORE[k][0].entries) > 0:
+                            actual_id = DATA_STORE[k][0].entries[-1][0] # Ambil ID paling belakang
+                        else:
+                            actual_id = "0-0" # Kalau stream masih kosong, anggap batasnya 0-0
+                        ids.append(actual_id)
+                    else:
+                        ids.append(raw_id)
 
                 # --- Fungsi Pembantu: Mengambil Data ---
                 # Karena kita mungkin butuh mencari data 2 kali (sebelum nunggu & sesudah bangun)
