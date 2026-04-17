@@ -49,13 +49,32 @@ def execute_command(cmd_p, target, session=None):
             channel = arg(1) or ""
             count = 1
             if session is not None:
-                # Tambahkan channel ke daftar langganan si klien (Set otomatis unik)
+                # 1. Catat di sesi lokal klien
                 session["subscribed_channels"].add(channel)
                 count = len(session["subscribed_channels"])
                 
-            # Respons standar Redis: ["subscribe", nama_channel, jumlah_langganan_unik]
+                # 2. Catat di Buku Besar Global (agar bisa di-PUBLISH)
+                with store.BLOCK_LOCK:
+                    if channel not in store.SUBSCRIBERS:
+                        store.SUBSCRIBERS[channel] = set()
+                    store.SUBSCRIBERS[channel].add(target)
+                
+            # Respons standar Redis: ["subscribe", nama_channel, jumlah_langganan_unik_klien]
             res = f"*3\r\n$9\r\nsubscribe\r\n${len(channel)}\r\n{channel}\r\n:{count}\r\n"
             target.sendall(res.encode())
+
+        elif c == "PUBLISH":
+            # Perintah mengirim pesan ke channel
+            channel = arg(1) or ""
+            message = arg(2) or "" # Belum kita gunakan pesannya di tahap ini
+            
+            # Hitung berapa banyak pendengar di channel ini
+            with store.BLOCK_LOCK:
+                subs = store.SUBSCRIBERS.get(channel, set())
+                count = len(subs)
+            
+            # Balas dengan jumlah pendengar sebagai integer
+            target.sendall(f":{count}\r\n".encode())
 
         elif c == "CONFIG":
             # Mengambil informasi konfigurasi server

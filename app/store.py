@@ -41,6 +41,10 @@ CONFIG = {
     "dbfilename": "dump.rdb"
 }
 
+# Pencatatan langganan global (untuk PUBLISH)
+# Format: { "nama_channel": set(koneksi1, koneksi2, ...) }
+SUBSCRIBERS = {}
+
 class Stream:
     def __init__(self):
         self.entries = []

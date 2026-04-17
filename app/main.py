@@ -107,7 +107,14 @@ def handle_client(connection):
                     execute_command(p, connection, session)
 
     except Exception: pass
-    finally: connection.close()
+    finally:
+        # PEMBERSIHAN: Hapus klien dari daftar langganan global jika dia pergi
+        if session["subscribed_channels"]:
+            with store.BLOCK_LOCK:
+                for chan in session["subscribed_channels"]:
+                    if chan in store.SUBSCRIBERS:
+                        store.SUBSCRIBERS[chan].discard(connection)
+        connection.close()
 
 import app.store as store
 
