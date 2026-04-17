@@ -122,13 +122,12 @@ from app.replication import initiate_handshake
 from app.rdb import load_rdb
 
 def main():
-    # Mendukung argumen konfigurasi RDB
-    if "--dir" in sys.argv:
-        try: store.CONFIG["dir"] = sys.argv[sys.argv.index("--dir") + 1]
-        except: pass
-    if "--dbfilename" in sys.argv:
-        try: store.CONFIG["dbfilename"] = sys.argv[sys.argv.index("--dbfilename") + 1]
-        except: pass
+    # Mendukung argumen konfigurasi RDB & AOF
+    keys_to_parse = ["--dir", "--dbfilename", "--appendonly", "--appenddirname", "--appendfilename", "--appendfsync"]
+    for key in keys_to_parse:
+        if key in sys.argv:
+            try: store.CONFIG[key[2:]] = sys.argv[sys.argv.index(key) + 1]
+            except: pass
 
     # MUAT DATA DARI RDB: Baca database dari file jika ada
     load_rdb()
