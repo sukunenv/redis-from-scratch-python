@@ -122,15 +122,19 @@ def handle_client(connection):
                 if key in DATA_STORE:
                     value, expiry_time = DATA_STORE[key]
                     
-                    # Kita asumsikan isinya adalah angka yang disimpan dalam bentuk string
-                    angka = int(value)
-                    angka += 1
-                    
-                    # Simpan kembali ke gudang
-                    DATA_STORE[key] = (str(angka), expiry_time)
-                    
-                    # Balas klien dengan angka barunya
-                    response = f":{angka}\r\n"
+                    try:
+                        # Coba ubah teks jadi angka
+                        angka = int(value)
+                        angka += 1
+                        
+                        # Simpan kembali ke gudang
+                        DATA_STORE[key] = (str(angka), expiry_time)
+                        
+                        # Balas klien dengan angka barunya
+                        response = f":{angka}\r\n"
+                    except ValueError:
+                        # Jika gagal (isinya bukan angka), balas dengan error sesuai standar Redis
+                        response = "-ERR value is not an integer or out of range\r\n"
                 else:
                     # Jika kunci belum ada, buat baru dengan nilai 1
                     DATA_STORE[key] = ("1", None)
