@@ -146,33 +146,55 @@ def handle_client(connection):
                 key = parts[4]      # Nama daftar Stream
                 entry_id = parts[6] # ID unik (misal: "0-1")
 
-                # Kumpulkan sisa argumen sebagai pasangan (field: value)
+                # Aturan 1: ID 0-0 dilarang keras!
+                if entry_id == "0-0":
+                    connection.sendall(b"-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                    continue # Langsung lanjut ke perintah klien berikutnya
+
+                # Pecah ID jadi 2 angka: waktu(ms) dan nomor_urut
+                ms_time, seq_num = map(int, entry_id.split("-"))
+
+                # Ambil sisa argumen sebagai pasangan (field: value)
                 fields = {}
-                # Mulai dari index 8, lompati setiap 4 langkah 
-                # (karena index antar data dipisah oleh format RESP panjang string)
                 for i in range(8, len(parts) - 1, 4):
-                    field = parts[i]
-                    value = parts[i+2]
-                    fields[field] = value
+                    fields[parts[i]] = parts[i+2]
+
+                # Siapkan variabel untuk ngecek apakah ID valid
+                is_valid = True
 
                 # Cek apakah stream dengan kunci ini sudah ada
                 if key in DATA_STORE:
                     data_lama, expiry = DATA_STORE[key]
                     if isinstance(data_lama, Stream):
-                        # Kalau sudah ada, tambahkan entri baru ke dalamnya
-                        data_lama.entries.append((entry_id, fields))
+                        # Aturan 2: ID baru harus LEBIH BESAR dari ID terakhir
+                        if len(data_lama.entries) > 0:
+                            last_id = data_lama.entries[-1][0] # Ambil ID paling ujung belakang
+                            last_ms, last_seq = map(int, last_id.split("-"))
+
+                            if ms_time < last_ms:
+                                is_valid = False
+                            elif ms_time == last_ms and seq_num <= last_seq:
+                                is_valid = False
+
+                        if is_valid:
+                            # Kalau valid, tambahkan entri baru
+                            data_lama.entries.append((entry_id, fields))
                     else:
-                        # (Abaikan kalau tipenya salah untuk sementara)
-                        pass
+                        pass # Abaikan kalau tipenya bukan stream
                 else:
-                    # Kalau belum ada, buat Stream baru
+                    # Kalau belum ada, buat Stream baru (ID pasti valid karena ini yang pertama)
                     stream_baru = Stream()
                     stream_baru.entries.append((entry_id, fields))
                     DATA_STORE[key] = (stream_baru, None)
 
-                # Balas dengan Bulk String berisi ID yang barusan ditambahkan
-                response = f"${len(entry_id)}\r\n{entry_id}\r\n"
-                connection.sendall(response.encode())
+                # Berikan balasan sesuai hasil pengecekan
+                if is_valid:
+                    # Sukses
+                    response = f"${len(entry_id)}\r\n{entry_id}\r\n"
+                    connection.sendall(response.encode())
+                else:
+                    # Gagal karena melanggar aturan ke-2
+                    connection.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
 
 
             # ─────────────────────────────────────────
