@@ -69,11 +69,27 @@ def handle_client(connection):
                 key = parts[4]
                 element = parts[6]
                 
-                # Di tahap ini, kita buat daftar baru dengan satu elemen
-                DATA_STORE[key] = ([element], None)
+                # Cek apakah kunci sudah ada di gudang
+                if key in DATA_STORE:
+                    # Ambil data lama dan waktu kedaluwarsanya
+                    data_lama, expiry = DATA_STORE[key]
+                    
+                    # Pastikan data lama itu bentuknya list (daftar)
+                    if isinstance(data_lama, list):
+                        data_lama.append(element)
+                        jumlah = len(data_lama)
+                    else:
+                        # Jika sebelumnya ternyata bukan list (misal dari SET), kita ganti jadi list
+                        DATA_STORE[key] = ([element], None)
+                        jumlah = 1
+                else:
+                    # Jika kunci belum ada, buat daftar baru
+                    DATA_STORE[key] = ([element], None)
+                    jumlah = 1
                 
-                # Balas dengan jumlah elemen dalam format Integer (:1\r\n)
-                connection.sendall(b":1\r\n")
+                # Balas dengan jumlah elemen terbaru (:jumlah\r\n)
+                response = f":{jumlah}\r\n"
+                connection.sendall(response.encode())
                 
     except Exception:
         pass
