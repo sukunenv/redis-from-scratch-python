@@ -1,49 +1,47 @@
 import os
 import sys
-
-# [JALUR CEPAT] Bikin folder & file AOF secepat kilat sebelum loading module lain
-_dir = os.getcwd()
-_appendonly = "no"
-_appenddirname = "appendonlydir"
-_appendfilename = "appendonly.aof"
-
-for i in range(len(sys.argv) - 1):
-    if sys.argv[i] == "--dir": _dir = sys.argv[i+1]
-    elif sys.argv[i] == "--appendonly": _appendonly = sys.argv[i+1]
-    elif sys.argv[i] == "--appenddirname": _appenddirname = sys.argv[i+1]
-    elif sys.argv[i] == "--appendfilename": _appendfilename = sys.argv[i+1]
-
-if _appendonly.strip().lower() == "yes":
-    _aof_dir = os.path.join(_dir, _appenddirname)
-    os.makedirs(_aof_dir, exist_ok=True)
-    
-    # Bikin file AOF kosong dengan suffix .1.incr.aof
-    _aof_filename = f"{_appendfilename}.1.incr.aof"
-    _aof_filepath = os.path.join(_aof_dir, _aof_filename)
-    if not os.path.exists(_aof_filepath):
-        open(_aof_filepath, 'a').close()
-        
-    # Bikin file manifest (HANYA jika belum ada)
-    _manifest_filepath = os.path.join(_aof_dir, f"{_appendfilename}.manifest")
-    if not os.path.exists(_manifest_filepath):
-        with open(_manifest_filepath, "w") as f:
-            f.write(f"file {_aof_filename} seq 1 type i\n")
-
 import socket
 import threading
 
-# Mengambil alat-alat yang kita butuhkan dari modul lain di dalam folder app
+import app.store as store
 from app.protocol import parse_resp
 from app.handlers import execute_command
-import app.store as store
+from app.replication import initiate_handshake
+from app.rdb import load_rdb
+from app.aof import init_aof, replay_aof
+
+def setup_aof():
+    """Early initialization of AOF directory and files to avoid race conditions."""
+    _dir = os.getcwd()
+    _appendonly = "no"
+    _appenddirname = "appendonlydir"
+    _appendfilename = "appendonly.aof"
+
+    # Fast-track argument parsing for AOF setup
+    for i in range(len(sys.argv) - 1):
+        if sys.argv[i] == "--dir": _dir = sys.argv[i+1]
+        elif sys.argv[i] == "--appendonly": _appendonly = sys.argv[i+1]
+        elif sys.argv[i] == "--appenddirname": _appenddirname = sys.argv[i+1]
+        elif sys.argv[i] == "--appendfilename": _appendfilename = sys.argv[i+1]
+
+    if _appendonly.strip().lower() == "yes":
+        aof_path = os.path.join(_dir, _appenddirname)
+        os.makedirs(aof_path, exist_ok=True)
+        
+        # Ensure initial incremental AOF file exists
+        aof_file = os.path.join(aof_path, f"{_appendfilename}.1.incr.aof")
+        if not os.path.exists(aof_file):
+            open(aof_file, 'a').close()
+            
+        # Create manifest file if it doesn't exist
+        manifest_file = os.path.join(aof_path, f"{_appendfilename}.manifest")
+        if not os.path.exists(manifest_file):
+            with open(manifest_file, "w") as f:
+                f.write(f"file {_appendfilename}.1.incr.aof seq 1 type i\n")
 
 def handle_client(connection):
-    """
-    SANG KONDUKTOR: Fungsi ini melayani setiap klien yang terhubung.
-    Di sini kita mengatur apakah perintah dijalankan langsung atau masuk antrean MULTI.
-    """
+    """Handles incoming client connections and command execution."""
     try:
-        # State (status) per koneksi klien dalam satu "Sesi"
         session = {
             "is_transaction_active": False,
             "transaction_queue": [],
@@ -53,34 +51,33 @@ def handle_client(connection):
 
         while True:
             raw_data = connection.recv(4096)
-            if not raw_data: break
+            if not raw_data:
+                break
 
             all_cmds = parse_resp(raw_data)
-            for p, _ in all_cmds:
-                if not p: continue
+            for cmd_parts, _ in all_cmds:
+                if not cmd_parts:
+                    continue
                 
-                cmd_name = p[0].upper()
+                cmd_name = cmd_parts[0].upper()
 
-                # --- PENANGANAN TRANSAKSI (QUEUEING) ---
+                # --- Transaction Handling ---
                 if session["is_transaction_active"] and cmd_name not in ["EXEC", "DISCARD"]:
-                    # Perintah WATCH/UNWATCH dilarang saat MULTI sedang aktif
                     if cmd_name in ["WATCH", "UNWATCH"]:
                         connection.sendall(f"-ERR {cmd_name} inside MULTI is not allowed\r\n".encode())
                     else:
-                        # Masukkan ke antrean dan beri tahu klien
-                        session["transaction_queue"].append(p)
+                        session["transaction_queue"].append(cmd_parts)
                         connection.sendall(b"+QUEUED\r\n")
                     continue
 
-                # --- FILTER SUBSCRIBED MODE (Satpam Mode) ---
-                # Jika klien sedang langganan, perintah yang boleh lewat terbatas
+                # --- Subscribed Mode Filter ---
                 if len(session["subscribed_channels"]) > 0:
                     allowed = ["SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "PING", "QUIT", "RESET"]
                     if cmd_name not in allowed:
                         connection.sendall(f"-ERR Can't execute '{cmd_name.lower()}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n".encode())
                         continue
 
-                # --- LOGIKA KONTROL (MULTI, EXEC, DISCARD, WATCH) ---
+                # --- Transaction Control Commands ---
                 if cmd_name == "MULTI":
                     session["is_transaction_active"] = True
                     connection.sendall(b"+OK\r\n")
@@ -96,8 +93,7 @@ def handle_client(connection):
                     session["watched_keys"] = {}
                     connection.sendall(b"+OK\r\n")
                 elif cmd_name == "WATCH":
-                    # Catat versi kunci untuk Optimistic Locking
-                    for k in p[1:]:
+                    for k in cmd_parts[1:]:
                         session["watched_keys"][k] = store.KEY_VERSIONS.get(k, 0)
                     connection.sendall(b"+OK\r\n")
                 elif cmd_name == "EXEC":
@@ -105,40 +101,33 @@ def handle_client(connection):
                         connection.sendall(b"-ERR EXEC without MULTI\r\n")
                         continue
                     
-                    # VALIDASI WATCH: Apakah ada kunci yang berubah sejak di-WATCH?
                     is_dirty = any(store.KEY_VERSIONS.get(k, 0) > v for k, v in session["watched_keys"].items())
                     
                     if is_dirty:
-                        # Batalkan transaksi jika ada konflik
                         connection.sendall(b"*-1\r\n")
                     else:
-                        # Jalankan semua antrean menggunakan Proxy agar output bisa dikumpulkan
-                        res_list = []
+                        responses = []
                         for q_cmd in session["transaction_queue"]:
-                            class Proxy:
+                            class ResponseProxy:
                                 def __init__(self): self.buf = b""
                                 def sendall(self, d): self.buf += d
                             
-                            prx = Proxy()
-                            execute_command(q_cmd, prx, session)
-                            res_list.append(prx.buf)
+                            proxy = ResponseProxy()
+                            execute_command(q_cmd, proxy, session)
+                            responses.append(proxy.buf)
                         
-                        # Kirim semua balasan sebagai Array RESP
-                        pk = f"*{len(res_list)}\r\n".encode()
-                        for r in res_list: pk += r
-                        connection.sendall(pk)
+                        header = f"*{len(responses)}\r\n".encode()
+                        connection.sendall(header + b"".join(responses))
 
-                    # Reset status transaksi setelah EXEC selesai
                     session["is_transaction_active"] = False
                     session["transaction_queue"] = []
                     session["watched_keys"] = {}
                 else:
-                    # JALANKAN PERINTAH SECARA NORMAL (IMMEDIATE MODE)
-                    execute_command(p, connection, session)
+                    execute_command(cmd_parts, connection, session)
 
-    except Exception: pass
+    except Exception:
+        pass
     finally:
-        # PEMBERSIHAN: Hapus klien dari daftar langganan global jika dia pergi
         if session["subscribed_channels"]:
             with store.BLOCK_LOCK:
                 for chan in session["subscribed_channels"]:
@@ -146,54 +135,56 @@ def handle_client(connection):
                         store.SUBSCRIBERS[chan].discard(connection)
         connection.close()
 
-from app.replication import initiate_handshake
-from app.rdb import load_rdb
-from app.aof import init_aof
-
 def main():
-    # Mendukung argumen konfigurasi RDB & AOF
-    keys_to_parse = ["--dir", "--dbfilename", "--appendonly", "--appenddirname", "--appendfilename", "--appendfsync"]
-    for key in keys_to_parse:
-        if key in sys.argv:
-            try: store.CONFIG[key[2:]] = sys.argv[sys.argv.index(key) + 1]
-            except: pass
+    # 1. Early AOF setup
+    setup_aof()
 
-    # MUAT DATA DARI RDB: Baca database dari file jika ada
+    # 2. Argument parsing for persistence settings
+    keys = ["--dir", "--dbfilename", "--appendonly", "--appenddirname", "--appendfilename", "--appendfsync"]
+    for k in keys:
+        if k in sys.argv:
+            try:
+                store.CONFIG[k[2:]] = sys.argv[sys.argv.index(k) + 1]
+            except (ValueError, IndexError):
+                pass
+
+    # 3. Load data from RDB snapshot
     load_rdb()
-
-    # Inisialisasi AOF (mencari file aktif dari manifest)
-    from app.aof import init_aof, replay_aof
-    init_aof()
     
-    # Putar ulang perintah dari file AOF ke memori
+    # 4. Initialize and replay AOF if enabled
+    init_aof()
     replay_aof()
 
-    # Mendukung argumen port (misal: --port 6380)
+    # 5. Network setup
     port = 6379
     if "--port" in sys.argv:
-        try: port = int(sys.argv[sys.argv.index("--port") + 1])
-        except: pass
+        try:
+            port = int(sys.argv[sys.argv.index("--port") + 1])
+        except (ValueError, IndexError):
+            pass
     
-    # Mendukung argumen --replicaof <master_host> <master_port>
+    # 6. Replication handshake
     if "--replicaof" in sys.argv:
         store.ROLE = "slave"
         idx = sys.argv.index("--replicaof")
-        args = sys.argv[idx + 1].split()
-        if len(args) == 2:
-            m_host, m_port = args[0], int(args[1])
-        else:
-            m_host = sys.argv[idx + 1]
-            m_port = int(sys.argv[idx + 2])
-        
-        # Mulai proses jabat tangan dengan membawa informasi port kita sendiri
-        threading.Thread(target=initiate_handshake, args=(m_host, m_port, port)).start()
+        try:
+            parts = sys.argv[idx + 1].split()
+            if len(parts) == 2:
+                m_host, m_port = parts[0], int(parts[1])
+            else:
+                m_host = sys.argv[idx + 1]
+                m_port = int(sys.argv[idx + 2])
+            threading.Thread(target=initiate_handshake, args=(m_host, m_port, port), daemon=True).start()
+        except (ValueError, IndexError):
+            pass
 
-    # Buat server utama
+    # 7. Start server
     server = socket.create_server(("localhost", port), reuse_port=True)
+    print(f"Redis server started on port {port}")
+    
     while True:
         client_sock, _ = server.accept()
-        # Jalankan thread baru untuk setiap klien
-        threading.Thread(target=handle_client, args=(client_sock,)).start()
+        threading.Thread(target=handle_client, args=(client_sock,), daemon=True).start()
 
 if __name__ == "__main__":
     main()

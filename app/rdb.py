@@ -3,14 +3,14 @@ import struct
 import app.store as store
 
 def load_rdb():
-    """Membaca file RDB dan memuat datanya ke DATA_STORE"""
+    """Reads the RDB snapshot file and loads data into DATA_STORE."""
     filepath = os.path.join(store.CONFIG["dir"], store.CONFIG["dbfilename"])
     if not os.path.exists(filepath):
         return
     
     try:
         with open(filepath, "rb") as f:
-            # 1. Header (REDIS0011) - 9 bytes pertama
+            # 1. Header (REDIS0011) - first 9 bytes
             header = f.read(9)
             if not header.startswith(b"REDIS"): return
             
@@ -28,51 +28,51 @@ def load_rdb():
                     _read_length(f) # Expiry keys
                 elif op == b"\xFF": # End of File
                     break
-                elif op == b"\xFC": # Expiry dalam milidetik (8 bytes)
+                elif op == b"\xFC": # Expiry in milliseconds (8 bytes)
                     expiry_ms = struct.unpack("<Q", f.read(8))[0]
                     _read_kv(f, expiry_ms / 1000.0)
-                elif op == b"\xFD": # Expiry dalam detik (4 bytes)
+                elif op == b"\xFD": # Expiry in seconds (4 bytes)
                     expiry_s = struct.unpack("<I", f.read(4))[0]
                     _read_kv(f, float(expiry_s))
                 else:
-                    # Pasangan Key-Value normal (op adalah Tipe Data)
+                    # Standard Key-Value pair (op is the Value Type)
                     _read_kv(f, None, op)
     except Exception as e:
-        print(f"Gagal memuat file RDB: {e}")
+        print(f"Error loading RDB file: {e}")
 
 def _read_length(f):
-    """Membaca panjang data sesuai aturan encoding RDB"""
+    """Parses RDB length-encoded data according to Redis specification."""
     b = f.read(1)
     if not b: return 0, False
     first = b[0]
     enc = (first & 0xC0) >> 6
     
-    if enc == 0: # 6 bit berikutnya adalah panjangnya
+    if enc == 0: # 6-bit length
         return first & 0x3F, False
-    elif enc == 1: # 14 bit (6 bit sekarang + 8 bit byte berikutnya)
+    elif enc == 1: # 14-bit length (6 bits now + 8 bits from next byte)
         second = f.read(1)[0]
         return ((first & 0x3F) << 8) | second, False
-    elif enc == 2: # 32 bit (4 byte berikutnya)
+    elif enc == 2: # 32-bit length (next 4 bytes)
         return struct.unpack(">I", f.read(4))[0], False
-    else: # Special encoding (biasanya angka yang disimpan jadi string)
+    else: # Special encoding (often integers stored as strings)
         return first & 0x3F, True
 
 def _read_string(f):
-    """Membaca string dari file RDB"""
+    """Parses a string from the RDB file."""
     length, is_special = _read_length(f)
     if is_special:
-        # Spesial: Angka 8-bit, 16-bit, atau 32-bit
+        # Special: 8-bit, 16-bit, or 32-bit integer encodings
         if length == 0: return str(f.read(1)[0])
         if length == 1: return str(struct.unpack("<H", f.read(2))[0])
         if length == 2: return str(struct.unpack("<I", f.read(4))[0])
         return ""
-    # String normal
+    # Standard byte string
     return f.read(length).decode(errors="ignore")
 
 def _read_kv(f, expiry, type_byte=None):
-    """Membaca pasangan Key-Value dan menyimpannya ke memori"""
+    """Reads a Key-Value pair and stores it in the memory data store."""
     t = type_byte if type_byte else f.read(1)
-    if t == b"\x00": # Tipe: String
+    if t == b"\x00": # Type: String
         key = _read_string(f)
         val = _read_string(f)
         store.DATA_STORE[key] = (val, expiry)

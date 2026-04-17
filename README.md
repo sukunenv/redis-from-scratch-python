@@ -1,60 +1,52 @@
-[![progress-banner](https://backend.codecrafters.io/progress/redis/ca067e34-d428-4f04-8e0b-18d83056f9d3)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# Build Your Own Redis (Python)
 
-This is a starting point for Python solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+![Project Banner](assets/banner.png)
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+This repository contains a high-performance, concurrent, and persistent Redis-compatible server built from scratch using Python. This project was developed as part of a deep-dive into network programming, data structures, and storage engines.
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+## 🚀 Overview
 
-# Passing the first stage
+This is my implementation of the "Build Your Own Redis" challenge. It's a journey into the internals of one of the world's most popular data stores, focusing on re-implementing core Redis features while maintaining protocol compatibility.
 
-The entry point for your Redis implementation is in `app/main.py`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+## ✨ Features Implemented
 
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
-```
+- **Core Engine**: Support for fundamental commands like `PING`, `ECHO`, `SET`, `GET`, `DEL`, `INCR`, and `TYPE`.
+- **Advanced Data Structures**:
+  - **Streams**: XADD, XREAD, XRANGE with consumer group support.
+  - **Sorted Sets**: ZADD, ZRANGE, ZRANK for ordered data management.
+  - **Hashes**: HSET, HGET, HDEL for structured data storage.
+- **Persistence**:
+  - **RDB (Redis Database File)**: Loading data from periodic snapshots.
+  - **AOF (Append Only File)**: Durable command logging with `fsync always` support and automatic replay on startup.
+- **Concurrency & Transactions**:
+  - Multi-threaded connection handling.
+  - Full support for `MULTI`, `EXEC`, `DISCARD`, and optimistic locking via `WATCH`/`UNWATCH`.
+- **Replication**: Master-Slave architecture with automated handshakes and propagation.
+- **Geospatial**: GEOADD and GEODIST with Haversine distance calculations.
+- **Security**: ACL (Access Control List) and AUTH implementation with password hashing.
 
-That's all!
+## 🛠️ Tech Stack
 
-# Stage 2 & beyond
+- **Language**: Python 3.8+
+- **Network**: Standard `socket` library for TCP communication.
+- **Concurrency**: `threading` for handling thousands of simultaneous clients.
 
-Note: This section is for stages 2 and beyond.
+## 🏁 How to Run
 
-1. Ensure you have `uv` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `app/main.py`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+1. **Install dependencies** (ensure you have Python 3.8+):
+   ```sh
+   # No external dependencies required! Just standard Python.
+   ```
 
-# Troubleshooting
+2. **Run the server**:
+   ```sh
+   ./your_program.sh --port 6379
+   ```
 
-## module `socket` has no attribute `create_server`
+3. **Connect using redis-cli**:
+   ```sh
+   redis-cli -p 6379 PING
+   ```
 
-When running your server locally, you might see an error like this:
-
-```
-Traceback (most recent call last):
-  File "/.../python3.7/runpy.py", line 193, in _run_module_as_main
-    "__main__", mod_spec)
-  File "/.../python3.7/runpy.py", line 85, in _run_code
-    exec(code, run_globals)
-  File "/app/app/main.py", line 11, in <module>
-    main()
-  File "/app/app/main.py", line 6, in main
-    s = socket.create_server(("localhost", 6379), reuse_port=True)
-AttributeError: module 'socket' has no attribute 'create_server'
-```
-
-This is because `socket.create_server` was introduced in Python 3.8, and you
-might be running an older version.
-
-You can fix this by installing Python 3.8 locally and using that.
-
-If you'd like to use a different version of Python, change the `buildpack` value
-in `codecrafters.yml`.
+---
+*Developed as a learning project to understand the inner workings of distributed systems and storage engines.*

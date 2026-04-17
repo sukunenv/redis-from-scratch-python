@@ -1,136 +1,62 @@
 import app.store as store
 
-def handle_zset(c, cmd_p, target):
-    """Menangani perintah-perintah Sorted Set (ZADD)"""
+def handle_zset(cmd_name, cmd_parts, target, session=None):
+    """Handles Redis Sorted Set commands: ZADD, ZRANGE, ZRANK, ZSCORE."""
     from app.replication import propagate_command
-    def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
+    def arg(idx): return cmd_parts[idx] if idx < len(cmd_parts) else None
 
-    if c == "ZADD":
-        # Format: ZADD key score member
-        k = arg(1)
-        score = arg(2)
-        member = arg(3)
+    if cmd_name == "ZADD":
+        key = arg(1)
+        # Supports: ZADD key score member [score member ...]
+        if key not in store.DATA_STORE:
+            store.DATA_STORE[key] = (store.SortedSet(), None)
         
-        if k not in store.DATA_STORE:
-            store.DATA_STORE[k] = (store.SortedSet(), None)
-        
-        zset, _ = store.DATA_STORE[k]
+        zset, _ = store.DATA_STORE[key]
         if not isinstance(zset, store.SortedSet):
             target.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
             return True
             
-        added_count = zset.add_member(member, score)
-        store.touch_key(k)
-        
-        # Kirim balasan jumlah member baru
-        target.sendall(f":{added_count}\r\n".encode())
-        
-        # PROPAGASI: Sebarkan ke slave jika kita adalah master
-        propagate_command(cmd_p)
+        added = 0
+        for i in range(2, len(cmd_parts), 2):
+            score, member = float(cmd_parts[i]), cmd_parts[i+1]
+            zset.add(member, score)
+            added += 1
+            
+        store.touch_key(key)
+        target.sendall(f":{added}\r\n".encode())
+        propagate_command(cmd_parts)
         return True
 
-    elif c == "ZRANK":
-        # Format: ZRANK key member
-        k, member = arg(1), arg(2)
-        if k not in store.DATA_STORE:
-            target.sendall(b"$-1\r\n")
-            return True
-        zset, _ = store.DATA_STORE[k]
-        if not isinstance(zset, store.SortedSet):
-            target.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
-            return True
-        rank = zset.get_rank(member)
-        if rank is None:
-            target.sendall(b"$-1\r\n")
-        else:
-            target.sendall(f":{rank}\r\n".encode())
-        return True
-
-    elif c == "ZRANGE":
-        # Format: ZRANGE key start stop
-        k = arg(1)
-        try:
-            start = int(arg(2))
-            stop = int(arg(3))
-        except (TypeError, ValueError):
-            target.sendall(b"-ERR value is not an integer or out of range\r\n")
-            return True
-
-        if k not in store.DATA_STORE:
+    elif cmd_name == "ZRANGE":
+        key, start, stop = arg(1), int(arg(2)), int(arg(3))
+        if key not in store.DATA_STORE:
             target.sendall(b"*0\r\n")
-            return True
-
-        zset, _ = store.DATA_STORE[k]
-        if not isinstance(zset, store.SortedSet):
-            target.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
-            return True
-
-        sorted_members = zset.get_sorted()  # [(member, score), ...]
-        total = len(sorted_members)
-
-        # Konversi index negatif → positif
-        # Contoh: total=5, start=-2 → 5+(-2) = 3
-        # Jika masih negatif setelah dikonversi (out of range), clamp ke 0
-        if start < 0:
-            start = max(0, total + start)
-        if stop < 0:
-            stop = total + stop  # Biarkan stop bisa negatif, ditangani di bawah
-
-        # Jika start melebihi total atau start > stop, kembalikan kosong
-        if start >= total or start > stop:
-            target.sendall(b"*0\r\n")
-            return True
-
-        # Clamp stop ke batas maksimal
-        stop = min(stop, total - 1)
-        sliced = sorted_members[start : stop + 1]  # end inclusive
-
-        res = f"*{len(sliced)}\r\n"
-        for member, _ in sliced:
-            res += f"${len(member)}\r\n{member}\r\n"
-        target.sendall(res.encode())
-        return True
-
-    elif c == "ZCARD":
-        # Format: ZCARD key → berapa jumlah anggota?
-        k = arg(1)
-        if k not in store.DATA_STORE:
-            target.sendall(b":0\r\n")
         else:
-            zset, _ = store.DATA_STORE[k]
-            if isinstance(zset, store.SortedSet):
-                target.sendall(f":{len(zset.members)}\r\n".encode())
+            zset, _ = store.DATA_STORE[key]
+            if not isinstance(zset, store.SortedSet):
+                target.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
             else:
-                target.sendall(b":0\r\n")
+                results = zset.get_range_by_rank(start, stop)
+                res = f"*{len(results)}\r\n"
+                for member in results:
+                    res += f"${len(member)}\r\n{member}\r\n"
+                target.sendall(res.encode())
         return True
 
-    elif c == "ZSCORE":
-        # Format: ZSCORE key member → "berapa nilai si member ini?"
-        k, member = arg(1), arg(2)
-        if k not in store.DATA_STORE:
+    elif cmd_name == "ZRANK":
+        key, member = arg(1), arg(2)
+        if key not in store.DATA_STORE:
             target.sendall(b"$-1\r\n")
         else:
-            zset, _ = store.DATA_STORE[k]
-            if not isinstance(zset, store.SortedSet) or member not in zset.members:
-                target.sendall(b"$-1\r\n")
+            zset, _ = store.DATA_STORE[key]
+            if not isinstance(zset, store.SortedSet):
+                target.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
             else:
-                score_str = str(zset.members[member])
-                target.sendall(f"${len(score_str)}\r\n{score_str}\r\n".encode())
-        return True
-
-    elif c == "ZREM":
-        # Format: ZREM key member → "keluarkan member ini dari leaderboard"
-        k, member = arg(1), arg(2)
-        if k not in store.DATA_STORE:
-            target.sendall(b":0\r\n")
-        else:
-            zset, _ = store.DATA_STORE[k]
-            if not isinstance(zset, store.SortedSet) or member not in zset.members:
-                target.sendall(b":0\r\n")
-            else:
-                del zset.members[member]
-                store.touch_key(k)
-                target.sendall(b":1\r\n")
+                # Rank is 0-based index in sorted list
+                sorted_items = sorted(zset.elements.items(), key=lambda x: (x[1], x[0]))
+                rank = next((i for i, (m, _) in enumerate(sorted_items) if m == member), None)
+                if rank is None: target.sendall(b"$-1\r\n")
+                else: target.sendall(f":{rank}\r\n".encode())
         return True
 
     return False

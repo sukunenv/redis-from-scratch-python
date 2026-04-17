@@ -1,31 +1,30 @@
 import app.store as store
 
-def handle_generic(c, cmd_p, target, session):
-    """Menangani perintah dasar (PING, ECHO)"""
-    def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
+def handle_generic(cmd_name, cmd_parts, target, session=None):
+    """Handles basic Redis commands: PING, ECHO, CONFIG, COMMAND."""
+    def arg(idx): return cmd_parts[idx] if idx < len(cmd_parts) else None
 
-    if c == "PING":
-        if session is not None and len(session["subscribed_channels"]) > 0:
-            # Respons khusus PING saat dalam mode langganan
-            target.sendall(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
-        else:
-            target.sendall(b"+PONG\r\n")
+    if cmd_name == "PING":
+        target.sendall(b"+PONG\r\n")
         return True
 
-    elif c == "ECHO":
-        val = arg(1) or ""
-        target.sendall(f"${len(val)}\r\n{val}\r\n".encode())
+    elif cmd_name == "ECHO":
+        msg = arg(1)
+        target.sendall(f"${len(msg)}\r\n{msg}\r\n".encode())
         return True
 
-    elif c == "CONFIG":
-        # Mengambil informasi konfigurasi server
-        sub = arg(1).upper() if arg(1) else ""
+    elif cmd_name == "CONFIG":
+        sub = arg(1).upper()
         if sub == "GET":
-            param = arg(2).lower() if arg(2) else ""
-            val = store.CONFIG.get(param, "")
-            # Format RESP: Array berisi 2 elemen [nama_param, nilai_param]
-            res = f"*2\r\n${len(param)}\r\n{param}\r\n${len(val)}\r\n{val}\r\n"
+            key = arg(2).lower()
+            val = store.CONFIG.get(key, "")
+            res = f"*2\r\n${len(key)}\r\n{key}\r\n${len(val)}\r\n{val}\r\n"
             target.sendall(res.encode())
         return True
-    
+
+    elif cmd_name == "COMMAND":
+        # Basic response for redis-cli metadata discovery
+        target.sendall(b"*0\r\n")
+        return True
+
     return False

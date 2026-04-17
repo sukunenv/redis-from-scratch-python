@@ -1,29 +1,29 @@
 import time
 import app.store as store
 
-def handle_data(c, cmd_p, target):
-    """Menangani perintah data umum (SET, GET, KEYS, DEL, TYPE, INCR)"""
+def handle_data(cmd_name, cmd_parts, target):
+    """Handles generic data commands: SET, GET, KEYS, DEL, TYPE, INCR, EXISTS, EXPIRE, TTL."""
     from app.replication import propagate_command
-    def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
+    def arg(idx): return cmd_parts[idx] if idx < len(cmd_parts) else None
 
-    if c == "SET":
-        k, v = arg(1), arg(2)
-        exp = None
-        if len(cmd_p) > 4 and cmd_p[3].upper() == "PX":
-            exp = time.time() + (int(cmd_p[4]) / 1000.0)
-        store.DATA_STORE[k] = (v, exp)
-        store.touch_key(k)
+    if cmd_name == "SET":
+        key, value = arg(1), arg(2)
+        expiry = None
+        if len(cmd_parts) > 4 and cmd_parts[3].upper() == "PX":
+            expiry = time.time() + (int(cmd_parts[4]) / 1000.0)
+        store.DATA_STORE[key] = (value, expiry)
+        store.touch_key(key)
         target.sendall(b"+OK\r\n")
-        propagate_command(cmd_p)
+        propagate_command(cmd_parts)
         return True
 
-    elif c == "GET":
-        k = arg(1)
-        if k in store.DATA_STORE:
-            val, ex = store.DATA_STORE[k]
+    elif cmd_name == "GET":
+        key = arg(1)
+        if key in store.DATA_STORE:
+            val, ex = store.DATA_STORE[key]
             if ex and time.time() > ex:
-                del store.DATA_STORE[k]
-                store.touch_key(k)
+                del store.DATA_STORE[key]
+                store.touch_key(key)
                 target.sendall(b"$-1\r\n")
             elif not isinstance(val, (str, bytes)):
                 target.sendall(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
@@ -32,7 +32,7 @@ def handle_data(c, cmd_p, target):
         else: target.sendall(b"$-1\r\n")
         return True
 
-    elif c == "KEYS":
+    elif cmd_name == "KEYS":
         pattern = arg(1)
         if pattern == "*":
             all_keys = []
@@ -47,40 +47,41 @@ def handle_data(c, cmd_p, target):
         else: target.sendall(b"*0\r\n")
         return True
 
-    elif c == "INCR":
-        k = arg(1)
-        if k in store.DATA_STORE:
-            v, ex = store.DATA_STORE[k]
+    elif cmd_name == "INCR":
+        key = arg(1)
+        if key in store.DATA_STORE:
+            v, ex = store.DATA_STORE[key]
             try:
                 num = int(v) + 1
-                store.DATA_STORE[k] = (str(num), ex)
-                store.touch_key(k)
+                store.DATA_STORE[key] = (str(num), ex)
+                store.touch_key(key)
                 target.sendall(f":{num}\r\n".encode())
             except: target.sendall(b"-ERR value is not an integer or out of range\r\n")
         else:
-            store.DATA_STORE[k] = ("1", None)
-            store.touch_key(k)
+            store.DATA_STORE[key] = ("1", None)
+            store.touch_key(key)
             target.sendall(b":1\r\n")
-        propagate_command(cmd_p)
+        propagate_command(cmd_parts)
         return True
 
-    elif c == "TYPE":
-        k = arg(1)
-        if k not in store.DATA_STORE: target.sendall(b"+none\r\n")
+    elif cmd_name == "TYPE":
+        key = arg(1)
+        if key not in store.DATA_STORE: target.sendall(b"+none\r\n")
         else:
-            v, ex = store.DATA_STORE[k]
+            v, ex = store.DATA_STORE[key]
             if ex and time.time() > ex:
-                del store.DATA_STORE[k]
-                store.touch_key(k); target.sendall(b"+none\r\n")
+                del store.DATA_STORE[key]
+                store.touch_key(key); target.sendall(b"+none\r\n")
             else:
                 if isinstance(v, (str, bytes)): target.sendall(b"+string\r\n")
                 elif isinstance(v, list): target.sendall(b"+list\r\n")
                 elif isinstance(v, store.Stream): target.sendall(b"+stream\r\n")
+                elif isinstance(v, store.SortedSet): target.sendall(b"+zset\r\n")
                 else: target.sendall(b"+none\r\n")
         return True
 
-    elif c == "DEL":
-        keys = cmd_p[1:]
+    elif cmd_name == "DEL":
+        keys = cmd_parts[1:]
         count = 0
         with store.BLOCK_LOCK:
             for k in keys:
@@ -88,11 +89,11 @@ def handle_data(c, cmd_p, target):
                     del store.DATA_STORE[k]
                     store.touch_key(k); count += 1
         target.sendall(f":{count}\r\n".encode())
-        propagate_command(cmd_p)
+        propagate_command(cmd_parts)
         return True
 
-    elif c == "EXISTS":
-        keys = cmd_p[1:]
+    elif cmd_name == "EXISTS":
+        keys = cmd_parts[1:]
         count = 0
         now = time.time()
         for k in keys:
@@ -105,25 +106,25 @@ def handle_data(c, cmd_p, target):
         target.sendall(f":{count}\r\n".encode())
         return True
 
-    elif c == "EXPIRE":
-        k, sec = arg(1), int(arg(2))
-        if k in store.DATA_STORE:
-            v, _ = store.DATA_STORE[k]
-            store.DATA_STORE[k] = (v, time.time() + sec)
+    elif cmd_name == "EXPIRE":
+        key, sec = arg(1), int(arg(2))
+        if key in store.DATA_STORE:
+            v, _ = store.DATA_STORE[key]
+            store.DATA_STORE[key] = (v, time.time() + sec)
             target.sendall(b":1\r\n")
-            propagate_command(cmd_p)
+            propagate_command(cmd_parts)
         else: target.sendall(b":0\r\n")
         return True
 
-    elif c == "TTL":
-        k = arg(1)
-        if k in store.DATA_STORE:
-            _, ex = store.DATA_STORE[k]
+    elif cmd_name == "TTL":
+        key = arg(1)
+        if key in store.DATA_STORE:
+            _, ex = store.DATA_STORE[key]
             if ex:
                 remain = int(ex - time.time())
                 if remain < 0:
-                    del store.DATA_STORE[k]
-                    store.touch_key(k); target.sendall(b":-2\r\n")
+                    del store.DATA_STORE[key]
+                    store.touch_key(key); target.sendall(b":-2\r\n")
                 else: target.sendall(f":{remain}\r\n".encode())
             else: target.sendall(b":-1\r\n")
         else: target.sendall(b":-2\r\n")

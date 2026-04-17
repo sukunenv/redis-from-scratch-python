@@ -1,7 +1,7 @@
 def parse_resp(data):
     """
-    PARSER RESP: Mengubah data mentah menjadi daftar (perintah, panjang_byte).
-    Contoh output: [ (["SET", "a", "b"], 31), (["PING"], 14) ]
+    RESP Parser: Converts raw binary data into a list of (command_parts, byte_length).
+    Example output: [ (["SET", "key", "value"], 31), (["PING"], 14) ]
     """
     if not data: return []
     results = []
@@ -9,7 +9,7 @@ def parse_resp(data):
     
     while cursor < len(data):
         start = cursor
-        # Redis RESP Array dimulai dengan '*'
+        # Redis RESP Array starts with '*'
         if data[cursor:cursor+1] == b'*':
             end_line = data.find(b"\r\n", cursor)
             if end_line == -1: break
@@ -30,7 +30,7 @@ def parse_resp(data):
             except (ValueError, IndexError):
                 break
         else:
-            # Menangani Simple String atau perintah non-array lainnya
+            # Handle Simple Strings or other non-array commands
             end_line = data.find(b"\r\n", cursor)
             if end_line == -1: break
             results.append(([data[cursor:end_line].decode()], end_line - cursor + 2))
@@ -40,15 +40,16 @@ def parse_resp(data):
 
 def format_xread_data(data):
     """
-    Mengubah hasil temuan data Stream kita menjadi format Array RESP yang kompleks.
-    Digunakan khusus untuk membalas perintah XREAD.
+    Formats internal stream data into a complex nested RESP Array.
+    Used specifically for responding to XREAD commands.
     """
     if not data: return "*-1\r\n"
-    o = f"*{len(data)}\r\n"
-    for k, ents in data:
-        # Format: [ [key, [ [id, [fields]] ] ] ]
-        o += f"*2\r\n${len(k)}\r\n{k}\r\n*{len(ents)}\r\n"
-        for eid, flds in ents:
-            o += f"*2\r\n${len(eid)}\r\n{eid}\r\n*{len(flds)*2}\r\n"
-            for fk, fv in flds.items(): o += f"${len(fk)}\r\n{fk}\r\n${len(fv)}\r\n{fv}\r\n"
-    return o
+    res = f"*{len(data)}\r\n"
+    for stream_name, entries in data:
+        # Structure: [ [stream_name, [ [entry_id, [field_data]] ] ] ]
+        res += f"*2\r\n${len(stream_name)}\r\n{stream_name}\r\n*{len(entries)}\r\n"
+        for entry_id, fields in entries:
+            res += f"*2\r\n${len(entry_id)}\r\n{entry_id}\r\n*{len(fields)*2}\r\n"
+            for field_name, field_value in fields.items():
+                res += f"${len(field_name)}\r\n{field_name}\r\n${len(field_value)}\r\n{field_value}\r\n"
+    return res
