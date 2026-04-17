@@ -68,6 +68,14 @@ def handle_zset(c, cmd_p, target):
         sorted_members = zset.get_sorted()  # [(member, score), ...]
         total = len(sorted_members)
 
+        # Konversi index negatif → positif
+        # Contoh: total=5, start=-2 → 5+(-2) = 3
+        # Jika masih negatif setelah dikonversi (out of range), clamp ke 0
+        if start < 0:
+            start = max(0, total + start)
+        if stop < 0:
+            stop = total + stop  # Biarkan stop bisa negatif, ditangani di bawah
+
         # Jika start melebihi total atau start > stop, kembalikan kosong
         if start >= total or start > stop:
             target.sendall(b"*0\r\n")
