@@ -1,7 +1,7 @@
 import time
 import app.store as store
 
-def handle_data(cmd_name, cmd_parts, target):
+def handle_data(cmd_name, cmd_parts, target, session=None):
     """Handles generic data commands: SET, GET, KEYS, DEL, TYPE, INCR, EXISTS, EXPIRE, TTL."""
     from app.replication import propagate_command
     def arg(idx): return cmd_parts[idx] if idx < len(cmd_parts) else None
