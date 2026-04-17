@@ -1,32 +1,28 @@
 import math
 
 def geohash_encode(longitude, latitude):
-    """
-    Mengubah koordinat (longitude, latitude) menjadi angka Geohash 52-bit.
-    Ini cara Redis menyimpan lokasi di dalam Sorted Set.
-    
-    Bayangkan: dunia dibagi jadi kotak-kotak kecil, dan setiap kotak punya "kode pos" unik.
-    Semakin mirip kode pos-nya, semakin dekat lokasinya.
-    """
-    # Batas koordinat bumi
-    lat_range = (-85.05112878, 85.05112878)
-    lon_range = (-180.0, 180.0)
+    lat_range = [-85.05112878, 85.05112878]
+    lon_range = [-180.0, 180.0]
 
-    lat_offset = (latitude - lat_range[0]) / (lat_range[1] - lat_range[0])
-    lon_offset = (longitude - lon_range[0]) / (lon_range[1] - lon_range[0])
-
-    lat_offset *= (1 << 26)
-    lon_offset *= (1 << 26)
-
-    lat_bits = int(lat_offset)
-    lon_bits = int(lon_offset)
-
-    # Interleave: selang-seling bit longitude dan latitude
-    # Hasilnya adalah satu angka 52-bit yang unik untuk setiap lokasi
     result = 0
-    for i in range(26):
-        result |= ((lon_bits >> (25 - i)) & 1) << (51 - 2 * i)
-        result |= ((lat_bits >> (25 - i)) & 1) << (50 - 2 * i)
+    for step in range(26):
+        # Longitude bit
+        lon_mid = (lon_range[0] + lon_range[1]) / 2
+        if longitude >= lon_mid:
+            result = (result << 1) | 1
+            lon_range[0] = lon_mid
+        else:
+            result = (result << 1) | 0
+            lon_range[1] = lon_mid
+
+        # Latitude bit
+        lat_mid = (lat_range[0] + lat_range[1]) / 2
+        if latitude >= lat_mid:
+            result = (result << 1) | 1
+            lat_range[0] = lat_mid
+        else:
+            result = (result << 1) | 0
+            lat_range[1] = lat_mid
 
     return float(result)
 

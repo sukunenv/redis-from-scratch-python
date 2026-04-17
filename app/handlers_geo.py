@@ -27,9 +27,10 @@ def handle_geo(c, cmd_p, target):
 
         zset, _ = store.DATA_STORE[k]
         
-        # Sesuai petunjuk Tester: "hardcode the score to be 0 for now"
-        # Nanti kita aktifkan lagi fungsi geohash_encode kita!
-        score = 0
+        # Sekarang kita sudah boleh pakai Geohash asli!
+        from app.geo_utils import geohash_encode
+        score = geohash_encode(lon, lat)
+        
         added = zset.add_member(member, score)
         store.touch_key(k)
 
