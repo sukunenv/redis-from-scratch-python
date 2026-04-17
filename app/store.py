@@ -57,7 +57,41 @@ SUBSCRIBERS = {}
 
 class Stream:
     def __init__(self):
+        # List of (id, fields_dict)
         self.entries = []
+
+    def add_entry(self, eid, fields):
+        # Validasi ID: Harus lebih besar dari entry terakhir
+        if self.entries:
+            last_id = self.entries[-1][0]
+            l_ms, l_seq = map(int, last_id.split("-"))
+            c_ms, c_seq = map(int, eid.split("-"))
+            if c_ms < l_ms or (c_ms == l_ms and c_seq <= l_seq):
+                return False
+        self.entries.append((eid, fields))
+        return True
+
+    def get_range(self, start, end, exclusive_start=False):
+        res = []
+        for eid, flds in self.entries:
+            # Parsing ID untuk perbandingan
+            ms, seq = map(int, eid.split("-"))
+            
+            # Rentang START
+            if start != "-":
+                if "-" in start: s_ms, s_seq = map(int, start.split("-"))
+                else: s_ms, s_seq = int(start), 0
+                if ms < s_ms or (ms == s_ms and seq < s_seq): continue
+                if exclusive_start and ms == s_ms and seq == s_seq: continue
+
+            # Rentang END
+            if end != "+":
+                if "-" in end: e_ms, e_seq = map(int, end.split("-"))
+                else: e_ms, e_seq = int(end), float('inf')
+                if ms > e_ms or (ms == e_ms and seq > e_seq): continue
+            
+            res.append((eid, flds))
+        return res
 
 def touch_key(key):
     """Menandai kunci telah berubah (untuk Optimistic Locking)"""
