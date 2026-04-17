@@ -15,7 +15,12 @@ def execute_command(cmd_p, target, session=None):
         def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
 
         if c == "PING":
-            target.sendall(b"+PONG\r\n")
+            if session is not None and len(session["subscribed_channels"]) > 0:
+                # Respons khusus PING saat dalam mode langganan: ["pong", ""]
+                target.sendall(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+            else:
+                # Respons PING normal
+                target.sendall(b"+PONG\r\n")
 
         elif c == "KEYS":
             # Menampilkan kunci yang cocok dengan pola (saat ini hanya mendukung '*')
