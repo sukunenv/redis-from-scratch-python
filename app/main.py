@@ -1,154 +1,244 @@
-import socket
-import threading
-import time
+import socket    # Alat untuk membuat koneksi jaringan (seperti kabel internet di dalam kode)
+import threading  # Alat untuk melayani banyak klien sekaligus (multitasking)
+import time       # Alat untuk melihat jam/waktu sekarang (dipakai untuk fitur kedaluwarsa)
 
-# Ini adalah "Gudang Data" kita (Dictionary)
+# Ini adalah "Gudang Data" kita. Bentuknya Dictionary (kamus).
+# Isinya: { "kunci": (nilai, waktu_basi) }
 DATA_STORE = {}
 
 
 def handle_client(connection):
+    # Fungsi ini dijalankan untuk setiap klien yang terhubung
     try:
         while True:
+            # Mendengarkan dan menerima pesan dari klien (maksimal 1024 karakter)
             data = connection.recv(1024)
+
+            # Jika klien memutus koneksi, data akan kosong, kita berhenti
             if not data:
                 break
-            
-            # Memecah pesan menjadi bagian-bagian
+
+            # Mengubah pesan (bytes) jadi teks biasa, lalu dipotong berdasarkan Enter (\r\n)
+            # Hasilnya misal: ['*2', '$4', 'PING', '']
             parts = data.decode().split("\r\n")
+
+            # Perintahnya selalu ada di bagian ke-3 (index ke-2), kita ubah jadi huruf besar
             command = parts[2].upper()
-            
+
+            # ─────────────────────────────────────────
+            # PERINTAH: PING → Balas PONG (Sekedar sapa)
+            # ─────────────────────────────────────────
             if command == "PING":
                 connection.sendall(b"+PONG\r\n")
-                
+
+            # ─────────────────────────────────────────
+            # PERINTAH: ECHO → Memantulkan balik kata yang dikirim
+            # ─────────────────────────────────────────
             elif command == "ECHO":
-                # ECHO <pesan>
+                # ECHO <pesan> — pesan ada di bagian ke-5 (index ke-4)
                 payload = parts[4]
+                # Susun balasan format: $panjang\r\nisi\r\n
                 response = f"${len(payload)}\r\n{payload}\r\n"
                 connection.sendall(response.encode())
-                
+
+            # ─────────────────────────────────────────
+            # PERINTAH: SET → Menyimpan data ke gudang
+            # ─────────────────────────────────────────
             elif command == "SET":
                 # SET <kunci> <nilai> [PX <milidetik>]
-                key = parts[4]
-                value = parts[6]
-                
-                # Kita cek apakah pesan cukup panjang dan ada tambahan PX
+                key = parts[4]    # Nama kunci (nama laci)
+                value = parts[6]  # Isi nilainya (isi laci)
+
+                # Defaultnya data tidak punya waktu kedaluwarsa
                 expiry_time = None
+
+                # Cek apakah ada kata "PX" (tanda bahwa ada batas waktu)
                 if len(parts) > 8 and parts[8].upper() == "PX":
-                    # Menambahkan waktu sekarang dengan batas milidetik (dibagi 1000 jadi detik)
-                    px_value = int(parts[10])
+                    px_value = int(parts[10])  # Ambil angka milidetiknya
+                    # Hitung waktu kedaluwarsa: jam sekarang + batas waktu (diubah ke detik)
                     expiry_time = time.time() + (px_value / 1000.0)
-                    
-                # Simpan berpasangan: (isi data, waktu basi)
+
+                # Simpan ke gudang dalam bentuk pasangan: (isi, waktu_basi)
                 DATA_STORE[key] = (value, expiry_time)
+
+                # Balas klien dengan tanda sukses
                 connection.sendall(b"+OK\r\n")
-                
+
+            # ─────────────────────────────────────────
+            # PERINTAH: GET → Mengambil data dari gudang
+            # ─────────────────────────────────────────
             elif command == "GET":
                 # GET <kunci>
-                key = parts[4]
-                
-                # Jika data ada di dalam gudang
+                key = parts[4]  # Nama kunci yang mau diambil
+
+                # Cek apakah kunci ini ada di gudang
                 if key in DATA_STORE:
-                    value, expiry_time = DATA_STORE[key]
-                    
-                    # Mengecek apakah sudah kedaluwarsa?
+                    value, expiry_time = DATA_STORE[key]  # Ambil isi dan waktu basinya
+
+                    # Cek: apakah sudah melewati waktu kedaluwarsa?
                     if expiry_time is not None and time.time() > expiry_time:
-                        # Hapus data yang sudah basi
-                        del DATA_STORE[key]
-                        response = "$-1\r\n"
+                        del DATA_STORE[key]   # Hapus data yang sudah basi dari gudang
+                        response = "$-1\r\n"  # Beritahu klien: "Datanya sudah tidak ada"
                     else:
-                        # Jika masih segar, kirim datanya
+                        # Data masih segar, kirimkan isinya
                         response = f"${len(value)}\r\n{value}\r\n"
                 else:
-                    # Jika data memang tidak ada
+                    # Kunci tidak ditemukan sama sekali di gudang
                     response = "$-1\r\n"
-                    
+
                 connection.sendall(response.encode())
-                
+
+            # ─────────────────────────────────────────
+            # PERINTAH: RPUSH → Memasukkan elemen ke daftar
+            # ─────────────────────────────────────────
             elif command == "RPUSH":
                 # RPUSH <kunci> <elemen1> <elemen2> ...
-                key = parts[4]
-                
-                # Kita buat daftar kosong untuk menampung elemen-elemen baru
+                key = parts[4]  # Nama daftar yang mau diisi
+
+                # Tampung semua elemen baru yang dikirim ke dalam list sementara
                 elemen_baru = []
-                # Mulai dari index 6, lompat 2 langkah setiap kali (karena ada $panjang di antaranya)
+                # Mulai dari index 6, lompat 2 langkah (karena ada $panjang di antara setiap elemen)
                 for i in range(6, len(parts) - 1, 2):
                     elemen_baru.append(parts[i])
-                
-                # Cek apakah kunci sudah ada di gudang
+
+                # Cek apakah daftar dengan kunci ini sudah pernah dibuat sebelumnya
                 if key in DATA_STORE:
-                    data_lama, expiry = DATA_STORE[key]
+                    data_lama, expiry = DATA_STORE[key]  # Ambil daftar lamanya
+
                     if isinstance(data_lama, list):
-                        # Tambahkan semua elemen baru ke daftar lama
+                        # Daftar sudah ada, tambahkan elemen baru ke belakang daftar lama
                         data_lama.extend(elemen_baru)
-                        jumlah = len(data_lama)
+                        jumlah = len(data_lama)  # Hitung total isinya sekarang
                     else:
+                        # Kunci ada tapi isinya bukan list (dari SET), ganti jadi list baru
                         DATA_STORE[key] = (elemen_baru, None)
                         jumlah = len(elemen_baru)
                 else:
+                    # Kunci belum ada, buat daftar baru dari nol
                     DATA_STORE[key] = (elemen_baru, None)
                     jumlah = len(elemen_baru)
-                
+
+                # Balas dengan total jumlah elemen dalam format Integer (:jumlah\r\n)
                 response = f":{jumlah}\r\n"
                 connection.sendall(response.encode())
-                
+
+            # ─────────────────────────────────────────
+            # PERINTAH: LPUSH → Memasukkan elemen dari DEPAN daftar
+            # ─────────────────────────────────────────
+            elif command == "LPUSH":
+                # LPUSH <kunci> <elemen1> <elemen2> ...
+                # Catatan: LPUSH "a" "b" "c" → hasilnya ["c", "b", "a"] (terbalik dari urutan input)
+                key = parts[4]  # Nama daftar yang mau diisi dari depan
+
+                # Tampung semua elemen baru yang dikirim ke dalam list sementara
+                elemen_baru = []
+                # Mulai dari index 6, lompat 2 langkah (karena ada $panjang di antara setiap elemen)
+                for i in range(6, len(parts) - 1, 2):
+                    elemen_baru.append(parts[i])
+
+                # Balik urutan elemen baru karena setiap elemen didorong satu-satu dari depan
+                # Contoh: input ["a","b","c"] → dibalik → ["c","b","a"] supaya saat ditempel ke depan
+                # hasilnya tetap urut seperti yang diharapkan Redis
+                elemen_baru_terbalik = list(reversed(elemen_baru))
+
+                # Cek apakah daftar dengan kunci ini sudah pernah dibuat sebelumnya
+                if key in DATA_STORE:
+                    data_lama, expiry = DATA_STORE[key]  # Ambil daftar lamanya
+
+                    if isinstance(data_lama, list):
+                        # Tempelkan elemen-elemen baru (yang sudah dibalik) ke bagian DEPAN daftar lama
+                        # Caranya: gabungkan elemen_baru_terbalik + data_lama jadi satu list baru
+                        daftar_baru = elemen_baru_terbalik + data_lama
+                        DATA_STORE[key] = (daftar_baru, expiry)  # Simpan kembali ke gudang
+                        jumlah = len(daftar_baru)  # Hitung total isinya sekarang
+                    else:
+                        # Kunci ada tapi isinya bukan list, ganti jadi list baru
+                        DATA_STORE[key] = (elemen_baru_terbalik, None)
+                        jumlah = len(elemen_baru_terbalik)
+                else:
+                    # Kunci belum ada, buat daftar baru dari nol
+                    DATA_STORE[key] = (elemen_baru_terbalik, None)
+                    jumlah = len(elemen_baru_terbalik)
+
+                # Balas dengan total jumlah elemen dalam format Integer (:jumlah\r\n)
+                response = f":{jumlah}\r\n"
+                connection.sendall(response.encode())
+
+            # ─────────────────────────────────────────
+            # PERINTAH: LRANGE → Melihat isi daftar (sebagian atau seluruhnya)
+            # ─────────────────────────────────────────
             elif command == "LRANGE":
                 # LRANGE <kunci> <mulai> <berhenti>
-                key = parts[4]
-                start = int(parts[6])
-                stop = int(parts[8])
-                
-                # Cek apakah kunci ada di gudang
+                key = parts[4]         # Nama daftar yang mau dilihat
+                start = int(parts[6])  # Urutan awal yang mau diambil
+                stop = int(parts[8])   # Urutan akhir yang mau diambil
+
+                # Cek apakah kunci ini ada di gudang
                 if key in DATA_STORE:
-                    data_lama, expiry = DATA_STORE[key]
-                    
-                    # Pastikan ini adalah sebuah daftar (list)
+                    data_lama, expiry = DATA_STORE[key]  # Ambil isi daftar
+
+                    # Pastikan isinya adalah sebuah list (daftar)
                     if isinstance(data_lama, list):
-                        panjang = len(data_lama)
-                        
-                        # Ubah index negatif jadi positif (menghitung dari belakang)
+                        panjang = len(data_lama)  # Hitung panjang daftar
+
+                        # Ubah index negatif menjadi positif (dihitung dari belakang)
+                        # Contoh: -1 pada daftar 5 elemen → 5 + (-1) = 4 (index terakhir)
                         if start < 0:
                             start = panjang + start
                         if stop < 0:
                             stop = panjang + stop
-                            
-                        # Aturan Redis: kalau terlalu mundur ke belakang, anggap saja 0 (paling depan)
+
+                        # Aturan Redis: kalau index masih negatif setelah dihitung (terlalu jauh mundur),
+                        # anggap saja mulai dari 0 (paling depan)
                         if start < 0:
                             start = 0
                         if stop < 0:
                             stop = 0
-                            
-                        # Ambil potongan dari start sampai stop (berhenti ditambah 1 karena aturan Python)
+
+                        # Potong daftarnya dari start sampai stop
+                        # (+1 karena Python tidak ikutkan angka terakhir dalam slice)
                         potongan = data_lama[start:stop + 1]
-                        
-                        # Mulai menyusun jawaban berformat Array (contoh: *3\r\n)
-                        response = f"*{len(potongan)}\r\n"
-                        
-                        # Menggabungkan setiap elemen ke dalam jawaban (contoh: $1\r\na\r\n)
+
+                        # Susun jawaban dengan format Array RESP
+                        # Contoh untuk 3 elemen: *3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n
+                        response = f"*{len(potongan)}\r\n"  # Awali dengan jumlah elemen
+
+                        # Tambahkan setiap elemen satu per satu ke dalam jawaban
                         for item in potongan:
                             response += f"${len(item)}\r\n{item}\r\n"
                     else:
-                        # Jika datanya ternyata bukan list, balas array kosong
+                        # Data ada tapi bukan daftar, balas dengan array kosong
                         response = "*0\r\n"
                 else:
-                    # Jika kuncinya tidak ada, balas array kosong
+                    # Kunci tidak ditemukan, balas dengan array kosong
                     response = "*0\r\n"
-                    
+
                 connection.sendall(response.encode())
 
     except Exception:
+        # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
         pass
     finally:
+        # Apapun yang terjadi, pastikan koneksi dengan klien ini ditutup dengan baik
         connection.close()
 
 
 def main():
+    # Membuat server di alamat localhost (komputer sendiri) port 6379 (port standar Redis)
+    # reuse_port=True: supaya port bisa langsung dipakai lagi setelah server dimatikan
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
 
+    # Terus berjalan selamanya, menunggu klien yang mau konek
     while True:
+        # Tunggu sampai ada klien yang menghubungi, lalu simpan koneksinya
         connection, _ = server_socket.accept()
+
+        # Jalankan fungsi handle_client di "thread" (jalur kerja) baru
+        # Supaya server bisa melayani klien berikutnya tanpa menunggu yang ini selesai
         thread = threading.Thread(target=handle_client, args=(connection,))
-        thread.start()
+        thread.start()  # Mulai thread baru
 
 
 if __name__ == "__main__":
+    # Titik awal program. Hanya jalan kalau file ini dijalankan langsung (bukan diimport)
     main()
