@@ -7,6 +7,7 @@ from app.handlers_stream import handle_stream
 from app.handlers_zset import handle_zset
 from app.handlers_generic import handle_generic
 from app.handlers_geo import handle_geo
+from app.handlers_auth import handle_auth
 
 def execute_command(cmd_p, target, session=None):
     """
@@ -39,6 +40,9 @@ def execute_command(cmd_p, target, session=None):
 
         # 7. Coba di Departemen Geospatial
         if handle_geo(c, cmd_p, target): return
+
+        # 8. Coba di Departemen Auth (Keamanan)
+        if handle_auth(c, cmd_p, target, session): return
 
     except Exception as e:
         print(f"Error executing command {cmd_p}: {e}")
