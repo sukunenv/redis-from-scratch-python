@@ -3,6 +3,21 @@ import threading
 import app.store as store
 from app.protocol import format_xread_data
 
+def propagate_command(cmd_p):
+    """Mengirimkan perintah tulis ke semua Slave yang terhubung"""
+    # HANYA MASTER yang boleh melakukan propagasi
+    if store.ROLE != "master": return
+    if not store.REPLICAS: return
+    # Format ulang perintah list menjadi RESP Array biner
+    res = f"*{len(cmd_p)}\r\n"
+    for arg in cmd_p:
+        res += f"${len(str(arg))}\r\n{arg}\r\n"
+    data = res.encode()
+    # Kirim ke semua Slave yang terdaftar
+    for replica in store.REPLICAS:
+        try: replica.sendall(data)
+        except: pass
+
 def execute_command(cmd_p, target):
     """
     Eksekutor Perintah: Di sinilah otak dari setiap perintah Redis berada.
@@ -42,6 +57,10 @@ def execute_command(cmd_p, target):
             rdb_bin = bytes.fromhex(store.EMPTY_RDB_HEX)
             header = f"${len(rdb_bin)}\r\n".encode()
             target.sendall(header + rdb_bin)
+            
+            # 3. DAFTARKAN SLAVE: Mulai sekarang koneksi ini akan menerima update data
+            if target not in store.REPLICAS:
+                store.REPLICAS.append(target)
 
         elif c == "ECHO":
             val = arg(1) or ""
@@ -56,6 +75,9 @@ def execute_command(cmd_p, target):
             store.DATA_STORE[k] = (v, exp)
             store.touch_key(k) # Beritahu sistem WATCH kalau kunci ini berubah
             target.sendall(b"+OK\r\n")
+            
+            # 4. PROPAGASI: Kirim perintah SET ini ke semua Slave
+            propagate_command(cmd_p)
 
         elif c == "GET":
             # Mengambil data, cek dulu apakah sudah basi (expired)
@@ -88,6 +110,8 @@ def execute_command(cmd_p, target):
                 store.DATA_STORE[k] = ("1", None)
                 store.touch_key(k)
                 target.sendall(b":1\r\n")
+                # PROPAGASI
+                propagate_command(cmd_p)
 
         elif c == "TYPE":
             # Mengecek tipe data (string, list, atau stream)
@@ -147,6 +171,8 @@ def execute_command(cmd_p, target):
                 if valid:
                     store.touch_key(k)
                     target.sendall(f"${len(eid)}\r\n{eid}\r\n".encode())
+                    # PROPAGASI
+                    propagate_command(cmd_p)
                     with store.BLOCK_LOCK:
                         if k in store.STREAM_BLOCKING_CLIENTS:
                             # Bangunkan klien yang sedang menunggu data (XREAD BLOCK)
@@ -226,6 +252,8 @@ def execute_command(cmd_p, target):
             else: store.DATA_STORE[k] = (items, None)
             store.touch_key(k)
             target.sendall(f":{len(store.DATA_STORE[k][0])}\r\n".encode())
+            # PROPAGASI
+            propagate_command(cmd_p)
             # Bangunkan klien BLPOP yang sedang menunggu (Blocking)
             with store.BLOCK_LOCK:
                 while k in store.BLOCKING_CLIENTS and store.BLOCKING_CLIENTS[k] and store.DATA_STORE[k][0]:
@@ -269,6 +297,8 @@ def execute_command(cmd_p, target):
                     it = l.pop(0)
                     store.touch_key(k)
                     target.sendall(f"${len(it)}\r\n{it}\r\n".encode())
+                    # PROPAGASI
+                    propagate_command(cmd_p)
             else: target.sendall(b"$-1\r\n")
 
         elif c == "BLPOP":

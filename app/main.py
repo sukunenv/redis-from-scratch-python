@@ -120,13 +120,36 @@ def initiate_handshake(master_host, master_port, my_port):
         master_conn.recv(1024) # Tunggu balasan OK
         
         # 4. Kirim PSYNC ? -1
-        # ? artinya kita belum punya Replication ID
-        # -1 artinya kita mulai dari offset awal
         cmd3 = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
         master_conn.sendall(cmd3.encode())
-        # Untuk tahap ini kita tidak perlu menunggu balasan PSYNC
+        
+        # 5. Lewati balasan FULLRESYNC dan file RDB kosong
+        # Kita baca dulu balasannya (+FULLRESYNC...)
+        resp = master_conn.recv(1024)
+        
+        # Jika balasan berisi RDB ($...), kita pastikan sudah terbaca semua
+        # Di tahap ini RDB sangat kecil, jadi recv(1024) biasanya sudah cukup mengambil semuanya
+        
+        # 6. MODE PROPAGASI: Tetap terhubung dan dengerin perintah dari Master
+        while True:
+            data = master_conn.recv(4096)
+            if not data: break
+            
+            # Terjemahkan perintah dari Master
+            # Catatan: parse_resp kita saat ini berbasis string, 
+            # cukup untuk menangani perintah SET sederhana dari Master.
+            cmds = parse_resp(data)
+            for c_cmd in cmds:
+                if not c_cmd: continue
+                
+                # Jalankan perintah tapi jangan kirim balik jawaban ke Master
+                class SilentProxy:
+                    def sendall(self, d): pass
+                
+                execute_command(c_cmd, SilentProxy())
+
     except Exception as e:
-        print(f"Gagal jabat tangan dengan Master: {e}")
+        print(f"Gagal jabat tangan atau koneksi Master terputus: {e}")
 
 def main():
     # Mendukung argumen port (misal: --port 6380)
