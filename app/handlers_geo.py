@@ -11,6 +11,14 @@ def handle_geo(c, cmd_p, target):
         lat = float(arg(3))
         member = arg(4)
 
+        # Validasi Longitude dan Latitude
+        is_lon_valid = -180.0 <= lon <= 180.0
+        is_lat_valid = -85.05112878 <= lat <= 85.05112878
+
+        if not is_lon_valid or not is_lat_valid:
+            target.sendall(f"-ERR invalid longitude,latitude pair {lon},{lat}\r\n".encode())
+            return True
+
         # Di Redis, GEOADD menyimpan data di Sorted Set
         # dengan "geohash" sebagai score-nya.
         # Untuk tahap awal, kita simpan sederhana dulu.
