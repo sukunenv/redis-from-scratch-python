@@ -51,10 +51,18 @@ def handle_geo(c, cmd_p, target):
             if isinstance(val, store.SortedSet):
                 zset = val
                 
+        from app.geo_utils import geohash_decode
+        
         for member in members:
             if zset and member in zset.members:
-                # Member ada. Hardcode ke "0" dan "0" sesuai instruksi saat ini.
-                res += "*2\r\n$1\r\n0\r\n$1\r\n0\r\n"
+                # Ambil score asli (angka raksasa) dan decode!
+                score = zset.members[member]
+                lon, lat = geohash_decode(score)
+                
+                lon_str = str(lon)
+                lat_str = str(lat)
+                
+                res += f"*2\r\n${len(lon_str)}\r\n{lon_str}\r\n${len(lat_str)}\r\n{lat_str}\r\n"
             else:
                 # Member tidak ada (atau key tidak ada). Kirim null array.
                 res += "*-1\r\n"
