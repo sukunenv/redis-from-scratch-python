@@ -70,4 +70,31 @@ def handle_auth(c, cmd_p, target, session):
             target.sendall(b"+OK\r\n")
             return True
 
+    elif c == "AUTH":
+        # Format: AUTH username password (atau AUTH password untuk redis versi lama)
+        if len(cmd_p) >= 3:
+            username = cmd_p[1]
+            password = cmd_p[2]
+        else:
+            username = "default"
+            password = cmd_p[1] if len(cmd_p) > 1 else ""
+            
+        user = store.USERS.get(username, {"flags": [], "passwords": []})
+        
+        # Cek apakah user punya hak masuk tanpa password
+        if "nopass" in user["flags"]:
+            target.sendall(b"+OK\r\n")
+            return True
+            
+        # Hash password inputan untuk dicocokkan dengan yang ada di database
+        hashed = hashlib.sha256(password.encode()).hexdigest()
+        
+        if hashed in user["passwords"]:
+            target.sendall(b"+OK\r\n")
+        else:
+            # Kirim error format RESP (diawali dengan tanda minus)
+            target.sendall(b"-WRONGPASS invalid username-password pair or user is disabled.\r\n")
+            
+        return True
+
     return False
