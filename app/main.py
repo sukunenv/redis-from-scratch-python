@@ -259,7 +259,11 @@ def handle_client(connection):
                 end_id = parts[8]
 
                 # --- 1. Terjemahkan Batas Awal (Start) ---
-                if "-" in start_id:
+                if start_id == "-":
+                    # Tanda minus (-) artinya dari paling ujung awal (mulai dari 0-0)
+                    start_ms = 0
+                    start_seq = 0
+                elif "-" in start_id:
                     start_ms, start_seq = map(int, start_id.split("-"))
                 else:
                     # Jika tidak ada nomor urut, batas bawah otomatis dimulai dari 0
@@ -267,7 +271,11 @@ def handle_client(connection):
                     start_seq = 0
                 
                 # --- 2. Terjemahkan Batas Akhir (End) ---
-                if "-" in end_id:
+                if end_id == "+":
+                    # Tanda plus (+) artinya sampai paling ujung akhir (tak terhingga)
+                    end_ms = float('inf')
+                    end_seq = float('inf')
+                elif "-" in end_id:
                     end_ms, end_seq = map(int, end_id.split("-"))
                 else:
                     # Jika tidak ada nomor urut, batas atas dianggap tak terhingga (infinity)
