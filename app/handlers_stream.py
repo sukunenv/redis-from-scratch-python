@@ -34,7 +34,7 @@ def handle_stream(c, cmd_p, target):
             if s.add_entry(eid, flds):
                 store.touch_key(k)
                 target.sendall(f"${len(eid)}\r\n{eid}\r\n".encode())
-            else: target.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item ID\r\n")
+            else: target.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
         return True
 
     elif c == "XRANGE":
