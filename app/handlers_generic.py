@@ -1,3 +1,5 @@
+import app.store as store
+
 def handle_generic(c, cmd_p, target, session):
     """Menangani perintah dasar (PING, ECHO)"""
     def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
