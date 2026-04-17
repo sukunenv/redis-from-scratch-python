@@ -11,5 +11,11 @@ def handle_auth(c, cmd_p, target, session):
             # Sesuai instruksi tester: hardcode balasan dengan "default"
             target.sendall(b"$7\r\ndefault\r\n")
             return True
+        elif subcommand == "GETUSER":
+            # Format: ACL GETUSER username
+            # Saat ini kita diminta cuma nampilin properti "flags" berupa Array kosong
+            # RESP: Array isinya 2 -> "flags" dan []
+            target.sendall(b"*2\r\n$5\r\nflags\r\n*0\r\n")
+            return True
 
     return False
