@@ -100,16 +100,27 @@ def handle_client(connection):
 
 import app.store as store
 
-def initiate_handshake(master_host, master_port):
-    """Fungsi khusus Slave untuk menyapa Master (Handshake Step 1)"""
+def initiate_handshake(master_host, master_port, my_port):
+    """Fungsi khusus Slave untuk Handshake (PING & REPLCONF)"""
     try:
-        # Buat koneksi ke Master
         master_conn = socket.create_connection((master_host, master_port))
-        # Kirim PING dalam format RESP Array
+        
+        # 1. Kirim PING
         master_conn.sendall(b"*1\r\n$4\r\nPING\r\n")
-        # Untuk tahap ini kita hanya perlu mengirim PING
+        master_conn.recv(1024) # Tunggu balasan PONG
+        
+        # 2. Kirim REPLCONF listening-port
+        cmd1 = f"*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n${len(str(my_port))}\r\n{my_port}\r\n"
+        master_conn.sendall(cmd1.encode())
+        master_conn.recv(1024) # Tunggu balasan OK
+        
+        # 3. Kirim REPLCONF capa psync2
+        cmd2 = "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"
+        master_conn.sendall(cmd2.encode())
+        master_conn.recv(1024) # Tunggu balasan OK
+        
     except Exception as e:
-        print(f"Gagal menyapa Master: {e}")
+        print(f"Gagal jabat tangan dengan Master: {e}")
 
 def main():
     # Mendukung argumen port (misal: --port 6380)
@@ -122,7 +133,6 @@ def main():
     if "--replicaof" in sys.argv:
         store.ROLE = "slave"
         idx = sys.argv.index("--replicaof")
-        # Ambil host dan port master (menangani jika dlm satu string atau terpisah)
         args = sys.argv[idx + 1].split()
         if len(args) == 2:
             m_host, m_port = args[0], int(args[1])
@@ -130,8 +140,8 @@ def main():
             m_host = sys.argv[idx + 1]
             m_port = int(sys.argv[idx + 2])
         
-        # Mulai proses jabat tangan di thread terpisah agar tidak mengganggu server utama
-        threading.Thread(target=initiate_handshake, args=(m_host, m_port)).start()
+        # Mulai proses jabat tangan dengan membawa informasi port kita sendiri
+        threading.Thread(target=initiate_handshake, args=(m_host, m_port, port)).start()
 
     # Buat server utama
     server = socket.create_server(("localhost", port), reuse_port=True)

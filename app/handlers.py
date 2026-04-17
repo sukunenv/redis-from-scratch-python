@@ -29,6 +29,10 @@ def execute_command(cmd_p, target):
                 target.sendall(f"${len(res)}\r\n{res}\r\n".encode())
             else: target.sendall(b"$-1\r\n")
 
+        elif c == "REPLCONF":
+            # Perintah konfigurasi replikasi (Master cukup jawab OK)
+            target.sendall(b"+OK\r\n")
+
         elif c == "ECHO":
             val = arg(1) or ""
             target.sendall(f"${len(val)}\r\n{val}\r\n".encode())
