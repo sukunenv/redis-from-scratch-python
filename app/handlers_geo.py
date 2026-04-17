@@ -100,4 +100,53 @@ def handle_geo(c, cmd_p, target):
         target.sendall(f"${len(dist_str)}\r\n{dist_str}\r\n".encode())
         return True
 
+    elif c == "GEOSEARCH":
+        # Format: GEOSEARCH key FROMLONLAT lon lat BYRADIUS radius unit
+        k = arg(1)
+        
+        lon_center = 0.0
+        lat_center = 0.0
+        radius = 0.0
+        unit = "m"
+        
+        # Parsing argumen yang fleksibel (berdasarkan perintah Redis)
+        i = 2
+        while i < len(cmd_p):
+            token = str(cmd_p[i]).upper()
+            if token == "FROMLONLAT":
+                lon_center = float(cmd_p[i+1])
+                lat_center = float(cmd_p[i+2])
+                i += 3
+            elif token == "BYRADIUS":
+                radius = float(cmd_p[i+1])
+                unit = str(cmd_p[i+2]).lower()
+                i += 3
+            else:
+                i += 1
+                
+        # Konversi radius ke satuan meter
+        if unit == "km": radius *= 1000.0
+        elif unit == "mi": radius *= 1609.34
+        elif unit == "ft": radius *= 0.3048
+        
+        results = []
+        if k in store.DATA_STORE:
+            val, _ = store.DATA_STORE[k]
+            if isinstance(val, store.SortedSet):
+                from app.geo_utils import geohash_decode, haversine_distance
+                # Cek satu-satu mana yang masuk ke dalam radar kita
+                for member, score in val.members.items():
+                    m_lon, m_lat = geohash_decode(score)
+                    dist = haversine_distance(m_lon, m_lat, lon_center, lat_center)
+                    if dist <= radius:
+                        results.append(member)
+                        
+        # Kirim hasil berbentuk Array
+        res = f"*{len(results)}\r\n"
+        for r in results:
+            res += f"${len(r)}\r\n{r}\r\n"
+            
+        target.sendall(res.encode())
+        return True
+
     return False
