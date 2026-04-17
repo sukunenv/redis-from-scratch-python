@@ -20,7 +20,9 @@ def handle_auth(c, cmd_p, target, session):
     if c == "ACL":
         subcommand = arg(1)
         if subcommand == "WHOAMI":
-            target.sendall(b"$7\r\ndefault\r\n")
+            # Berikan nama sesuai dengan ID Card (session) tamu saat ini
+            user_now = session.get("authenticated_user", "default")
+            target.sendall(f"${len(user_now)}\r\n{user_now}\r\n".encode())
             return True
             
         elif subcommand == "GETUSER":
@@ -83,6 +85,7 @@ def handle_auth(c, cmd_p, target, session):
         
         # Cek apakah user punya hak masuk tanpa password
         if "nopass" in user["flags"]:
+            session["authenticated_user"] = username
             target.sendall(b"+OK\r\n")
             return True
             
@@ -90,6 +93,7 @@ def handle_auth(c, cmd_p, target, session):
         hashed = hashlib.sha256(password.encode()).hexdigest()
         
         if hashed in user["passwords"]:
+            session["authenticated_user"] = username
             target.sendall(b"+OK\r\n")
         else:
             # Kirim error format RESP (diawali dengan tanda minus)

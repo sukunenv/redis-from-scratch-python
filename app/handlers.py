@@ -14,7 +14,24 @@ def execute_command(cmd_p, target, session=None):
     Dispatcher Utama: Mengarahkan perintah ke modul handler yang tepat.
     """
     try:
+        import app.store as store
+        if not hasattr(store, "USERS"):
+            store.USERS = {"default": {"flags": ["nopass"], "passwords": []}}
+            
+        # Jika tamu baru datang, cek apakah dia boleh langsung masuk (nopass)
+        if session is not None and "authenticated_user" not in session:
+            if "nopass" in store.USERS["default"]["flags"]:
+                session["authenticated_user"] = "default"
+            else:
+                session["authenticated_user"] = None
+                
         c = cmd_p[0].upper()
+        
+        # Gerbang Elektronik: Usir tamu yang belum login (kecuali dia mau login pakai AUTH)
+        if session is not None and session.get("authenticated_user") is None and c != "AUTH":
+            target.sendall(b"-NOAUTH Authentication required.\r\n")
+            return
+            
         def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
 
         # 0. Coba di Departemen Dasar (PING, ECHO)
