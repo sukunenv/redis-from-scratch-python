@@ -100,6 +100,36 @@ def handle_client(connection):
                 connection.sendall(response.encode())
 
             # ─────────────────────────────────────────
+            # PERINTAH: TYPE → Mengecek jenis data (string, list, dll) dari sebuah kunci
+            # ─────────────────────────────────────────
+            elif command == "TYPE":
+                # TYPE <kunci>
+                key = parts[4]
+
+                # Cek apakah kunci ada di gudang
+                if key in DATA_STORE:
+                    data, expiry_time = DATA_STORE[key]
+
+                    # Cek dulu apakah datanya sudah kedaluwarsa
+                    if expiry_time is not None and time.time() > expiry_time:
+                        del DATA_STORE[key]
+                        response = "+none\r\n"
+                    else:
+                        # Cek jenis datanya pakai isinstance()
+                        if isinstance(data, str):
+                            response = "+string\r\n"
+                        elif isinstance(data, list):
+                            response = "+list\r\n"
+                        else:
+                            response = "+none\r\n"
+                else:
+                    # Kunci tidak ditemukan
+                    response = "+none\r\n"
+
+                connection.sendall(response.encode())
+
+
+            # ─────────────────────────────────────────
             # PERINTAH: RPUSH → Memasukkan elemen ke BELAKANG daftar
             # ─────────────────────────────────────────
             elif command == "RPUSH":
