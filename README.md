@@ -1,7 +1,7 @@
 # Build Your Own Redis (Python)
 
 <p align="center">
-  <img src="assets/Python_Loop.gif" width="100%" alt="Project Demo">
+  <img src="assets/LOGO-FIX.png" width="100%" alt="Project Banner">
 </p>
 
 This repository contains a high-performance, concurrent, and persistent Redis-compatible server built from scratch using Python. This project was developed as part of a deep-dive into network programming, data structures, and storage engines.
