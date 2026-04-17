@@ -1,20 +1,26 @@
 import os
 import sys
 
-# [JALUR CEPAT] Bikin folder AOF secepat kilat sebelum loading module lain
+# [JALUR CEPAT] Bikin folder & file AOF secepat kilat sebelum loading module lain
 _dir = os.getcwd()
 _appendonly = "no"
 _appenddirname = "appendonlydir"
+_appendfilename = "appendonly.aof"
 
 for i in range(len(sys.argv) - 1):
     if sys.argv[i] == "--dir": _dir = sys.argv[i+1]
     elif sys.argv[i] == "--appendonly": _appendonly = sys.argv[i+1]
     elif sys.argv[i] == "--appenddirname": _appenddirname = sys.argv[i+1]
+    elif sys.argv[i] == "--appendfilename": _appendfilename = sys.argv[i+1]
 
 if _appendonly.strip().lower() == "yes":
     _aof_dir = os.path.join(_dir, _appenddirname)
-    print(f"DEBUG: Membuka jalur cepat untuk buat folder di {_aof_dir}", flush=True)
     os.makedirs(_aof_dir, exist_ok=True)
+    
+    # Bikin file AOF kosong dengan suffix .1.incr.aof
+    _aof_filepath = os.path.join(_aof_dir, f"{_appendfilename}.1.incr.aof")
+    if not os.path.exists(_aof_filepath):
+        open(_aof_filepath, 'a').close()
 
 import socket
 import threading
