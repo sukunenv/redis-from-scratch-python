@@ -123,29 +123,49 @@ def initiate_handshake(master_host, master_port, my_port):
         cmd3 = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
         master_conn.sendall(cmd3.encode())
         
-        # 5. Baca respons Master (FULLRESYNC + RDB + mungkin ada perintah awal)
-        # Kita simpan semuanya ke buffer awal
-        initial_data = master_conn.recv(4096)
-        
-        # Cari di mana posisi perintah pertama (*) dimulai
-        # FULLRESYNC dimulai dengan '+'
-        # RDB dimulai dengan '$'
-        # Perintah propagasi dimulai dengan '*'
-        
-        # Trik: Kita buang semua data sampai kita ketemu '*' pertama
-        first_cmd_idx = initial_data.find(b'*')
-        
-        # Jika ada perintah yang nyelip di buffer awal, proses sekarang!
-        if first_cmd_idx != -1:
-            leftover = initial_data[first_cmd_idx:]
-            all_cmds = parse_resp(leftover)
-            for c_cmd, cmd_len in all_cmds:
-                if not c_cmd: continue
-                class ReplicationProxy:
-                    def sendall(self, d):
-                        if b"REPLCONF" in d and b"ACK" in d: master_conn.sendall(d)
-                execute_command(c_cmd, ReplicationProxy())
-                store.REPLICA_OFFSET += cmd_len
+        # 5. Baca respons Master secara bertahap
+        # Gunakan buffer untuk memisahkan RDB dari perintah selanjutnya
+        buffer = b""
+        while True:
+            chunk = master_conn.recv(4096)
+            if not chunk: break
+            buffer += chunk
+            
+            # Kita cari apakah kita sudah melewati RDB
+            # Format: +FULLRESYNC...\r\n$<len>\r\n<isi_biner>
+            if b"+" in buffer and b"$" in buffer:
+                # Cari baris FULLRESYNC
+                idx_resync = buffer.find(b"\r\n")
+                if idx_resync == -1: continue
+                
+                # Cari baris panjang RDB ($<len>\r\n)
+                idx_rdb_header = buffer.find(b"$", idx_resync)
+                idx_rdb_len_end = buffer.find(b"\r\n", idx_rdb_header)
+                if idx_rdb_len_end == -1: continue
+                
+                try:
+                    rdb_len = int(buffer[idx_rdb_header+1:idx_rdb_len_end])
+                    # Total byte yang harus dibuang:
+                    # Sampai akhir baris $len (idx_rdb_len_end + 2) + isi biner RDB (rdb_len)
+                    rdb_total_end = idx_rdb_len_end + 2 + rdb_len
+                    
+                    if len(buffer) >= rdb_total_end:
+                        # Kita sudah punya semua data RDB, sekarang ambil sisanya!
+                        leftover = buffer[rdb_total_end:]
+                        buffer = b"" # Kosongkan buffer karena kita akan pindah ke loop utama
+                        
+                        # Jika ada perintah di sisa buffer, proses sekarang
+                        if leftover:
+                            all_cmds = parse_resp(leftover)
+                            for c_cmd, cmd_len in all_cmds:
+                                if not c_cmd: continue
+                                class ReplicationProxy:
+                                    def sendall(self, d):
+                                        if b"REPLCONF" in d and b"ACK" in d: master_conn.sendall(d)
+                                execute_command(c_cmd, ReplicationProxy())
+                                store.REPLICA_OFFSET += cmd_len
+                        break # Keluar dari loop pembersihan RDB
+                except: continue
 
         # 6. MODE PROPAGASI: Lanjutkan dengerin sisa perintah
         while True:
