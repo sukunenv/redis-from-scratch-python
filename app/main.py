@@ -13,10 +13,13 @@ def handle_client(connection):
     Di sini kita mengatur apakah perintah dijalankan langsung atau masuk antrean MULTI.
     """
     try:
-        # State (status) per koneksi klien
-        is_transaction_active = False
-        transaction_queue = []
-        watched_keys = {}
+        # State (status) per koneksi klien dalam satu "Sesi"
+        session = {
+            "is_transaction_active": False,
+            "transaction_queue": [],
+            "watched_keys": {},
+            "subscribed_channels": set()
+        }
 
         while True:
             raw_data = connection.recv(4096)
@@ -29,43 +32,43 @@ def handle_client(connection):
                 cmd_name = p[0].upper()
 
                 # --- PENANGANAN TRANSAKSI (QUEUEING) ---
-                if is_transaction_active and cmd_name not in ["EXEC", "DISCARD"]:
+                if session["is_transaction_active"] and cmd_name not in ["EXEC", "DISCARD"]:
                     # Perintah WATCH/UNWATCH dilarang saat MULTI sedang aktif
                     if cmd_name in ["WATCH", "UNWATCH"]:
                         connection.sendall(f"-ERR {cmd_name} inside MULTI is not allowed\r\n".encode())
                     else:
                         # Masukkan ke antrean dan beri tahu klien
-                        transaction_queue.append(p)
+                        session["transaction_queue"].append(p)
                         connection.sendall(b"+QUEUED\r\n")
                     continue
 
                 # --- LOGIKA KONTROL (MULTI, EXEC, DISCARD, WATCH) ---
                 if cmd_name == "MULTI":
-                    is_transaction_active = True
+                    session["is_transaction_active"] = True
                     connection.sendall(b"+OK\r\n")
                 elif cmd_name == "DISCARD":
-                    if not is_transaction_active:
+                    if not session["is_transaction_active"]:
                         connection.sendall(b"-ERR DISCARD without MULTI\r\n")
                     else:
-                        is_transaction_active = False
-                        transaction_queue = []
-                        watched_keys = {}
+                        session["is_transaction_active"] = False
+                        session["transaction_queue"] = []
+                        session["watched_keys"] = {}
                         connection.sendall(b"+OK\r\n")
                 elif cmd_name == "UNWATCH":
-                    watched_keys = {}
+                    session["watched_keys"] = {}
                     connection.sendall(b"+OK\r\n")
                 elif cmd_name == "WATCH":
                     # Catat versi kunci untuk Optimistic Locking
                     for k in p[1:]:
-                        watched_keys[k] = store.KEY_VERSIONS.get(k, 0)
+                        session["watched_keys"][k] = store.KEY_VERSIONS.get(k, 0)
                     connection.sendall(b"+OK\r\n")
                 elif cmd_name == "EXEC":
-                    if not is_transaction_active:
+                    if not session["is_transaction_active"]:
                         connection.sendall(b"-ERR EXEC without MULTI\r\n")
                         continue
                     
                     # VALIDASI WATCH: Apakah ada kunci yang berubah sejak di-WATCH?
-                    is_dirty = any(store.KEY_VERSIONS.get(k, 0) > v for k, v in watched_keys.items())
+                    is_dirty = any(store.KEY_VERSIONS.get(k, 0) > v for k, v in session["watched_keys"].items())
                     
                     if is_dirty:
                         # Batalkan transaksi jika ada konflik
@@ -73,13 +76,13 @@ def handle_client(connection):
                     else:
                         # Jalankan semua antrean menggunakan Proxy agar output bisa dikumpulkan
                         res_list = []
-                        for q_cmd in transaction_queue:
+                        for q_cmd in session["transaction_queue"]:
                             class Proxy:
                                 def __init__(self): self.buf = b""
                                 def sendall(self, d): self.buf += d
                             
                             prx = Proxy()
-                            execute_command(q_cmd, prx)
+                            execute_command(q_cmd, prx, session)
                             res_list.append(prx.buf)
                         
                         # Kirim semua balasan sebagai Array RESP
@@ -88,12 +91,12 @@ def handle_client(connection):
                         connection.sendall(pk)
 
                     # Reset status transaksi setelah EXEC selesai
-                    is_transaction_active = False
-                    transaction_queue = []
-                    watched_keys = {}
+                    session["is_transaction_active"] = False
+                    session["transaction_queue"] = []
+                    session["watched_keys"] = {}
                 else:
                     # JALANKAN PERINTAH SECARA NORMAL (IMMEDIATE MODE)
-                    execute_command(p, connection)
+                    execute_command(p, connection, session)
 
     except Exception: pass
     finally: connection.close()

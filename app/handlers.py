@@ -3,7 +3,7 @@ import threading
 import app.store as store
 from app.protocol import format_xread_data
 
-def execute_command(cmd_p, target):
+def execute_command(cmd_p, target, session=None):
     """
     Eksekutor Perintah: Di sinilah otak dari setiap perintah Redis berada.
     Setiap blok 'elif' menangani satu jenis perintah spesifik.
@@ -42,8 +42,14 @@ def execute_command(cmd_p, target):
         elif c == "SUBSCRIBE":
             # Perintah berlangganan channel (Pub/Sub)
             channel = arg(1) or ""
-            # Respons standar Redis: ["subscribe", nama_channel, jumlah_langganan]
-            res = f"*3\r\n$9\r\nsubscribe\r\n${len(channel)}\r\n{channel}\r\n:1\r\n"
+            count = 1
+            if session is not None:
+                # Tambahkan channel ke daftar langganan si klien (Set otomatis unik)
+                session["subscribed_channels"].add(channel)
+                count = len(session["subscribed_channels"])
+                
+            # Respons standar Redis: ["subscribe", nama_channel, jumlah_langganan_unik]
+            res = f"*3\r\n$9\r\nsubscribe\r\n${len(channel)}\r\n{channel}\r\n:{count}\r\n"
             target.sendall(res.encode())
 
         elif c == "CONFIG":
