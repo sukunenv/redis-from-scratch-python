@@ -40,3 +40,39 @@ def append_to_aof(command_parts):
                 os.fsync(f.fileno())
     except Exception as e:
         print(f"Gagal menulis ke AOF: {e}")
+
+def replay_aof():
+    """Membaca file AOF dan menjalankan perintahnya ke dalam memori"""
+    if not store.AOF_PATH or not os.path.exists(store.AOF_PATH):
+        return
+    
+    from app.protocol import parse_resp
+    from app.handlers import execute_command
+    
+    # Klien palsu buat nampung output (kita abaikan outputnya saat replay)
+    class FakeTarget:
+        def sendall(self, data): pass
+    
+    try:
+        with open(store.AOF_PATH, "rb") as f:
+            data = f.read()
+            if not data:
+                return
+            
+            # Gunakan parser RESP yang sudah kita punya untuk membedah isi file
+            commands = parse_resp(data)
+            
+            # MATIKAN fitur pencatatan AOF sementara supaya nggak catat dua kali
+            original_appendonly = store.CONFIG.get("appendonly")
+            store.CONFIG["appendonly"] = "no"
+            
+            for cmd_parts, _ in commands:
+                if cmd_parts:
+                    # Jalankan perintah ke mesin utama (handlers)
+                    execute_command(cmd_parts, FakeTarget())
+            
+            # Kembalikan fitur pencatatan AOF ke kondisi semula
+            store.CONFIG["appendonly"] = original_appendonly
+            
+    except Exception as e:
+        print(f"Gagal Replay AOF: {e}")

@@ -162,7 +162,11 @@ def main():
     load_rdb()
 
     # Inisialisasi AOF (mencari file aktif dari manifest)
+    from app.aof import init_aof, replay_aof
     init_aof()
+    
+    # Putar ulang perintah dari file AOF ke memori
+    replay_aof()
 
     # Mendukung argumen port (misal: --port 6380)
     port = 6379
