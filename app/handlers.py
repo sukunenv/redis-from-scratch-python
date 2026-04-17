@@ -17,6 +17,19 @@ def execute_command(cmd_p, target):
         if c == "PING":
             target.sendall(b"+PONG\r\n")
 
+        elif c == "KEYS":
+            # Menampilkan kunci yang cocok dengan pola (saat ini hanya mendukung '*')
+            pattern = arg(1)
+            if pattern == "*":
+                all_keys = list(store.DATA_STORE.keys())
+                # Format RESP: Array berisi semua nama kunci
+                res = f"*{len(all_keys)}\r\n"
+                for k in all_keys:
+                    res += f"${len(k)}\r\n{k}\r\n"
+                target.sendall(res.encode())
+            else:
+                target.sendall(b"*0\r\n")
+
         elif c == "CONFIG":
             # Mengambil informasi konfigurasi server
             sub = arg(1).upper() if arg(1) else ""

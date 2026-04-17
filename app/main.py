@@ -101,6 +101,7 @@ def handle_client(connection):
 import app.store as store
 
 from app.replication import initiate_handshake
+from app.rdb import load_rdb
 
 def main():
     # Mendukung argumen konfigurasi RDB
@@ -110,6 +111,9 @@ def main():
     if "--dbfilename" in sys.argv:
         try: store.CONFIG["dbfilename"] = sys.argv[sys.argv.index("--dbfilename") + 1]
         except: pass
+
+    # MUAT DATA DARI RDB: Baca database dari file jika ada
+    load_rdb()
 
     # Mendukung argumen port (misal: --port 6380)
     port = 6379
