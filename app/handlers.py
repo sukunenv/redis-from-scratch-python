@@ -34,9 +34,14 @@ def execute_command(cmd_p, target):
             target.sendall(b"+OK\r\n")
 
         elif c == "PSYNC":
-            # Perintah sinkronisasi (Master menjawab dengan FULLRESYNC)
+            # 1. Jawab dengan FULLRESYNC
             res = f"+FULLRESYNC {store.MASTER_REPLID} 0\r\n"
             target.sendall(res.encode())
+            
+            # 2. Kirim file RDB kosong (Format: $<panjang>\r\n<isi_biner>)
+            rdb_bin = bytes.fromhex(store.EMPTY_RDB_HEX)
+            header = f"${len(rdb_bin)}\r\n".encode()
+            target.sendall(header + rdb_bin)
 
         elif c == "ECHO":
             val = arg(1) or ""
