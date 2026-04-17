@@ -1,3 +1,4 @@
+import time
 import app.store as store
 
 def handle_list(c, cmd_p, target):
@@ -69,5 +70,29 @@ def handle_list(c, cmd_p, target):
                 v = l[idx]
                 target.sendall(f"${len(v)}\r\n{v}\r\n".encode())
         return True
+
+    elif c in ["BLPOP", "BRPOP"]:
+        # Format: BLPOP key [key ...] timeout
+        # Versi sederhana: hanya dukung 1 key untuk tahap ini
+        k, timeout_sec = arg(1), float(arg(2))
+        start_wait = time.time()
+        
+        while True:
+            if k in store.DATA_STORE:
+                l, _ = store.DATA_STORE[k]
+                if isinstance(l, list) and l:
+                    v = l.pop(0) if c == "BLPOP" else l.pop()
+                    store.touch_key(k)
+                    # Balas dengan Array [key, value]
+                    res = f"*2\r\n${len(k)}\r\n{k}\r\n${len(v)}\r\n{v}\r\n"
+                    target.sendall(res.encode())
+                    return True
+            
+            # Cek timeout
+            if (time.time() - start_wait) >= timeout_sec:
+                target.sendall(b"*-1\r\n") # Null array jika timeout
+                return True
+            
+            time.sleep(0.05) # Istirahat sejenak
     
     return False
