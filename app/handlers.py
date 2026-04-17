@@ -33,6 +33,11 @@ def execute_command(cmd_p, target):
             # Perintah konfigurasi replikasi (Master cukup jawab OK)
             target.sendall(b"+OK\r\n")
 
+        elif c == "PSYNC":
+            # Perintah sinkronisasi (Master menjawab dengan FULLRESYNC)
+            res = f"+FULLRESYNC {store.MASTER_REPLID} 0\r\n"
+            target.sendall(res.encode())
+
         elif c == "ECHO":
             val = arg(1) or ""
             target.sendall(f"${len(val)}\r\n{val}\r\n".encode())

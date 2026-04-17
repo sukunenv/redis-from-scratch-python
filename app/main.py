@@ -119,7 +119,12 @@ def initiate_handshake(master_host, master_port, my_port):
         master_conn.sendall(cmd2.encode())
         master_conn.recv(1024) # Tunggu balasan OK
         
-    except Exception as e:
+        # 4. Kirim PSYNC ? -1
+        # ? artinya kita belum punya Replication ID
+        # -1 artinya kita mulai dari offset awal
+        cmd3 = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
+        master_conn.sendall(cmd3.encode())
+        # Untuk tahap ini kita tidak perlu menunggu balasan PSYNC
         print(f"Gagal jabat tangan dengan Master: {e}")
 
 def main():
