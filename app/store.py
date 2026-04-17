@@ -15,6 +15,9 @@ BLOCK_LOCK = threading.Lock()
 BLOCKING_CLIENTS = {}
 STREAM_BLOCKING_CLIENTS = {}
 
+# Konfigurasi Replication
+ROLE = "master"
+
 class Stream:
     def __init__(self):
         self.entries = []

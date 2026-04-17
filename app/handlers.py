@@ -1,34 +1,45 @@
 import time
 import threading
-from app.store import DATA_STORE, BLOCK_LOCK, BLOCKING_CLIENTS, STREAM_BLOCKING_CLIENTS, Stream, touch_key
+from app.store import DATA_STORE, BLOCK_LOCK, BLOCKING_CLIENTS, STREAM_BLOCKING_CLIENTS, Stream, touch_key, ROLE
 from app.protocol import format_xread_data
 
 def execute_command(cmd_p, target):
     """
     Eksekutor Perintah: Di sinilah otak dari setiap perintah Redis berada.
-    Target bisa berupa koneksi asli atau Proxy (saat EXEC).
+    Setiap blok 'elif' menangani satu jenis perintah spesifik.
     """
     try:
         c = cmd_p[0].upper()
+        # Fungsi pembantu untuk mengambil argumen secara aman
         def arg(idx): return cmd_p[idx] if idx < len(cmd_p) else None
 
         if c == "PING":
             target.sendall(b"+PONG\r\n")
+
+        elif c == "INFO":
+            # Memberikan info statistik (tahap awal: replication)
+            section = arg(1)
+            if section and section.lower() == "replication":
+                res = f"role:{ROLE}"
+                target.sendall(f"${len(res)}\r\n{res}\r\n".encode())
+            else: target.sendall(b"$-1\r\n")
 
         elif c == "ECHO":
             val = arg(1) or ""
             target.sendall(f"${len(val)}\r\n{val}\r\n".encode())
 
         elif c == "SET":
+            # Menyimpan data dengan opsi PX (kedaluwarsa dalam milidetik)
             k, v = arg(1), arg(2)
             exp = None
             if len(cmd_p) > 4 and cmd_p[3].upper() == "PX":
                 exp = time.time() + (int(cmd_p[4]) / 1000.0)
             DATA_STORE[k] = (v, exp)
-            touch_key(k)
+            touch_key(k) # Beritahu sistem WATCH kalau kunci ini berubah
             target.sendall(b"+OK\r\n")
 
         elif c == "GET":
+            # Mengambil data, cek dulu apakah sudah basi (expired)
             k = arg(1)
             if k in DATA_STORE:
                 val, ex = DATA_STORE[k]
@@ -43,6 +54,7 @@ def execute_command(cmd_p, target):
             else: target.sendall(b"$-1\r\n")
 
         elif c == "INCR":
+            # Menambah nilai angka sebesar 1
             k = arg(1)
             if k in DATA_STORE:
                 v, ex = DATA_STORE[k]
@@ -59,6 +71,7 @@ def execute_command(cmd_p, target):
                 target.sendall(b":1\r\n")
 
         elif c == "TYPE":
+            # Mengecek tipe data (string, list, atau stream)
             k = arg(1)
             if k not in DATA_STORE: target.sendall(b"+none\r\n")
             else:
@@ -74,7 +87,9 @@ def execute_command(cmd_p, target):
                     else: target.sendall(b"+none\r\n")
 
         elif c == "XADD":
+            # Menambah data ke Stream dengan ID unik
             k, eid = arg(1), arg(2)
+            # Logika pembuatan ID otomatis (* atau -*)
             if eid == "*":
                 ms = int(time.time() * 1000)
                 if k in DATA_STORE and isinstance(DATA_STORE[k][0], Stream) and DATA_STORE[k][0].entries:
@@ -103,6 +118,7 @@ def execute_command(cmd_p, target):
                     if isinstance(s, Stream) and s.entries:
                         lm, ls = map(int, s.entries[-1][0].split("-"))
                         nm, ns = map(int, eid.split("-"))
+                        # ID baru tidak boleh lebih kecil dari ID terakhir
                         if nm < lm or (nm == lm and ns <= ls): valid = False
                     if valid and isinstance(s, Stream): s.entries.append((eid, flds))
                 else:
@@ -114,10 +130,12 @@ def execute_command(cmd_p, target):
                     target.sendall(f"${len(eid)}\r\n{eid}\r\n".encode())
                     with BLOCK_LOCK:
                         if k in STREAM_BLOCKING_CLIENTS:
+                            # Bangunkan klien yang sedang menunggu data (XREAD BLOCK)
                             for bel, _ in STREAM_BLOCKING_CLIENTS[k]: bel.set()
                 else: target.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
 
         elif c == "XRANGE":
+            # Mengambil daftar entri stream dalam rentang ID tertentu
             k, start, end = arg(1), arg(2), arg(3)
             def p_id(rid, dflt):
                 if rid == "-": return 0, 0
@@ -139,6 +157,7 @@ def execute_command(cmd_p, target):
             target.sendall(o.encode())
 
         elif c == "XREAD":
+            # Membaca stream, bisa menunggu (BLOCK) jika data belum ada
             u_p = [x.upper() for x in cmd_p]
             b_ms = int(cmd_p[u_p.index("BLOCK")+1]) if "BLOCK" in u_p else -1
             s_idx = u_p.index("STREAMS")
@@ -177,6 +196,7 @@ def execute_command(cmd_p, target):
             else: target.sendall(b"*-1\r\n")
 
         elif c in ["RPUSH", "LPUSH"]:
+            # Memasukkan elemen ke List (di ujung kanan atau kiri)
             k, items = arg(1), cmd_p[2:]
             if c == "LPUSH": items = list(reversed(items))
             if k in DATA_STORE and isinstance(DATA_STORE[k][0], list):
@@ -187,6 +207,7 @@ def execute_command(cmd_p, target):
             else: DATA_STORE[k] = (items, None)
             touch_key(k)
             target.sendall(f":{len(DATA_STORE[k][0])}\r\n".encode())
+            # Bangunkan klien BLPOP yang sedang menunggu (Blocking)
             with BLOCK_LOCK:
                 while k in BLOCKING_CLIENTS and BLOCKING_CLIENTS[k] and DATA_STORE[k][0]:
                     it = DATA_STORE[k][0].pop(0)
@@ -195,6 +216,7 @@ def execute_command(cmd_p, target):
                     bl.set()
 
         elif c == "LRANGE":
+            # Mengambil elemen list dalam rentang indeks tertentu
             k, st, sp = arg(1), int(arg(2)), int(arg(3))
             if k in DATA_STORE and isinstance(DATA_STORE[k][0], list):
                 l = DATA_STORE[k][0]
@@ -207,11 +229,13 @@ def execute_command(cmd_p, target):
             else: target.sendall(b"*0\r\n")
 
         elif c == "LLEN":
+            # Menghitung panjang List
             k = arg(1)
             size = len(DATA_STORE[k][0]) if k in DATA_STORE and isinstance(DATA_STORE[k][0], list) else 0
             target.sendall(f":{size}\r\n".encode())
 
         elif c == "LPOP":
+            # Mengambil elemen dari ujung kiri list
             k, cn = arg(1), (int(arg(2)) if len(cmd_p)>2 else None)
             if k in DATA_STORE and isinstance(DATA_STORE[k][0], list) and DATA_STORE[k][0]:
                 l, ex = DATA_STORE[k]
@@ -229,6 +253,7 @@ def execute_command(cmd_p, target):
             else: target.sendall(b"$-1\r\n")
 
         elif c == "BLPOP":
+            # Versi blocking dari LPOP (menunggu jika list kosong)
             k, t_out = arg(1), float(arg(2))
             wait_bel, wait_box = None, []
             with BLOCK_LOCK:

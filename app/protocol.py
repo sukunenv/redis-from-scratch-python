@@ -1,7 +1,11 @@
 def parse_resp(data):
-    """Menerjemahkan data mentah RESP menjadi daftar perintah Python"""
+    """
+    PARSER RESP: Mengubah data mentah dari jaringan menjadi daftar perintah Python.
+    Protokol Redis (RESP) menggunakan awalan seperti '*' untuk array dan '$' untuk teks.
+    """
     if not data: return []
     try:
+        # Dekode byte menjadi string untuk memudahkan pemrosesan
         lines = data.decode().split("\r\n")
     except UnicodeDecodeError: return []
     
@@ -12,6 +16,7 @@ def parse_resp(data):
         if not line:
             i += 1
             continue
+        # Perintah selalu dimulai dengan tanda '*' yang diikuti jumlah argumen
         if line.startswith('*'):
             try:
                 num_args = int(line[1:])
@@ -19,6 +24,7 @@ def parse_resp(data):
                 i += 1
                 for _ in range(num_args):
                     if i + 1 < len(lines):
+                        # Lompat melewati tanda '$' dan ambil isinya
                         cmd_parts.append(lines[i+1])
                         i += 2
                 if len(cmd_parts) == num_args:
@@ -29,10 +35,14 @@ def parse_resp(data):
     return commands
 
 def format_xread_data(data):
-    """Memformat data Stream ke Array RESP untuk XREAD"""
+    """
+    Mengubah hasil temuan data Stream kita menjadi format Array RESP yang kompleks.
+    Digunakan khusus untuk membalas perintah XREAD.
+    """
     if not data: return "*-1\r\n"
     o = f"*{len(data)}\r\n"
     for k, ents in data:
+        # Format: [ [key, [ [id, [fields]] ] ] ]
         o += f"*2\r\n${len(k)}\r\n{k}\r\n*{len(ents)}\r\n"
         for eid, flds in ents:
             o += f"*2\r\n${len(eid)}\r\n{eid}\r\n*{len(flds)*2}\r\n"
