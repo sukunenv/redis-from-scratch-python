@@ -118,4 +118,19 @@ def handle_zset(c, cmd_p, target):
                 target.sendall(f"${len(score_str)}\r\n{score_str}\r\n".encode())
         return True
 
+    elif c == "ZREM":
+        # Format: ZREM key member → "keluarkan member ini dari leaderboard"
+        k, member = arg(1), arg(2)
+        if k not in store.DATA_STORE:
+            target.sendall(b":0\r\n")
+        else:
+            zset, _ = store.DATA_STORE[k]
+            if not isinstance(zset, store.SortedSet) or member not in zset.members:
+                target.sendall(b":0\r\n")
+            else:
+                del zset.members[member]
+                store.touch_key(k)
+                target.sendall(b":1\r\n")
+        return True
+
     return False
