@@ -70,4 +70,34 @@ def handle_geo(c, cmd_p, target):
         target.sendall(res.encode())
         return True
 
+    elif c == "GEODIST":
+        # Format: GEODIST key member1 member2 [unit]
+        k = arg(1)
+        m1 = arg(2)
+        m2 = arg(3)
+        # arg(4) adalah unit (m, km, ft, mi). Di tes ini kita pakai default (meter)
+        
+        if k not in store.DATA_STORE:
+            target.sendall(b"$-1\r\n")
+            return True
+
+        val, _ = store.DATA_STORE[k]
+        if not isinstance(val, store.SortedSet) or m1 not in val.members or m2 not in val.members:
+            target.sendall(b"$-1\r\n")
+            return True
+
+        from app.geo_utils import geohash_decode, haversine_distance
+        
+        score1 = val.members[m1]
+        score2 = val.members[m2]
+        
+        lon1, lat1 = geohash_decode(score1)
+        lon2, lat2 = geohash_decode(score2)
+        
+        dist = haversine_distance(lon1, lat1, lon2, lat2)
+        dist_str = f"{dist:.4f}"
+        
+        target.sendall(f"${len(dist_str)}\r\n{dist_str}\r\n".encode())
+        return True
+
     return False

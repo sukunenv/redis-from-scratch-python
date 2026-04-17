@@ -54,3 +54,25 @@ def geohash_decode(score):
     latitude = (lat_range[0] + lat_range[1]) / 2.0
 
     return longitude, latitude
+
+def haversine_distance(lon1, lat1, lon2, lat2):
+    """
+    Mengukur jarak antara dua titik koordinat di permukaan bumi.
+    Rumus ini memperhitungkan kelengkungan bumi.
+    """
+    R = 6372797.560856  # Jari-jari bumi spesifik yang dipakai Redis (dalam meter)
+    
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    lon1_rad = math.radians(lon1)
+    lon2_rad = math.radians(lon2)
+
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+
+    # Rumus Trigonometri Haversine
+    a = math.sin(dlat / 2.0)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2.0)**2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    return R * c
+
