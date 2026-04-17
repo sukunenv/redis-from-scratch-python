@@ -144,36 +144,59 @@ def handle_client(connection):
             elif command == "XADD":
                 # XADD <kunci> <id> <field1> <value1> <field2> <value2> ...
                 key = parts[4]      # Nama daftar Stream
-                entry_id = parts[6] # ID unik (misal: "0-1" atau "123-*")
-
-                # Pecah ID sementara jadi 2 bagian teks: waktu(ms) dan nomor_urut
-                ms_time_str, seq_num_str = entry_id.split("-")
-                ms_time = int(ms_time_str)
+                entry_id = parts[6] # ID unik (misal: "0-1", "123-*", atau "*")
 
                 # ========================================================
-                # FITUR AUTO-GENERATE NOMOR URUT (*)
+                # FITUR AUTO-GENERATE FULL (*) ATAU SEBAGIAN (123-*)
                 # ========================================================
-                if seq_num_str == "*":
+                if entry_id == "*":
+                    # Klien minta buatkan ID sepenuhnya. Ambil waktu server saat ini (milidetik).
+                    ms_time = int(time.time() * 1000)
+                    
                     if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream) and len(DATA_STORE[key][0].entries) > 0:
-                        # Ada data sebelumnya, mari kita intip ID terakhir
                         last_id = DATA_STORE[key][0].entries[-1][0]
                         last_ms, last_seq = map(int, last_id.split("-"))
-
+                        
                         if ms_time == last_ms:
-                            # Kalau waktunya sama dengan yang terakhir, nomor urut ditambah 1
+                            # Waktu persis sama dengan data terakhir
+                            seq_num = last_seq + 1
+                        elif ms_time < last_ms:
+                            # (Jaga-jaga kalau waktu server mundur karena sinkronisasi jam)
+                            ms_time = last_ms
                             seq_num = last_seq + 1
                         else:
-                            # Kalau waktunya baru, mulai dari 0 (kecuali waktunya 0, mulai dari 1)
-                            seq_num = 0 if ms_time > 0 else 1
+                            seq_num = 0
                     else:
-                        # Daftar masih kosong sama sekali, mulai dari 0 (kecuali waktunya 0, mulai dari 1)
-                        seq_num = 0 if ms_time > 0 else 1
-                    
-                    # Rangkai kembali menjadi ID utuh
+                        seq_num = 0
+                        
                     entry_id = f"{ms_time}-{seq_num}"
+
                 else:
-                    # Kalau bukan bintang, ubah saja jadi angka biasa
-                    seq_num = int(seq_num_str)
+                    # Pecah ID sementara jadi 2 bagian teks: waktu(ms) dan nomor_urut
+                    ms_time_str, seq_num_str = entry_id.split("-")
+                    ms_time = int(ms_time_str)
+
+                    if seq_num_str == "*":
+                        if key in DATA_STORE and isinstance(DATA_STORE[key][0], Stream) and len(DATA_STORE[key][0].entries) > 0:
+                            # Ada data sebelumnya, mari kita intip ID terakhir
+                            last_id = DATA_STORE[key][0].entries[-1][0]
+                            last_ms, last_seq = map(int, last_id.split("-"))
+
+                            if ms_time == last_ms:
+                                # Kalau waktunya sama dengan yang terakhir, nomor urut ditambah 1
+                                seq_num = last_seq + 1
+                            else:
+                                # Kalau waktunya baru, mulai dari 0 (kecuali waktunya 0, mulai dari 1)
+                                seq_num = 0 if ms_time > 0 else 1
+                        else:
+                            # Daftar masih kosong sama sekali, mulai dari 0 (kecuali waktunya 0, mulai dari 1)
+                            seq_num = 0 if ms_time > 0 else 1
+                        
+                        # Rangkai kembali menjadi ID utuh
+                        entry_id = f"{ms_time}-{seq_num}"
+                    else:
+                        # Kalau bukan bintang, ubah saja jadi angka biasa
+                        seq_num = int(seq_num_str)
 
                 # ========================================================
                 # ATURAN VALIDASI KETAT
