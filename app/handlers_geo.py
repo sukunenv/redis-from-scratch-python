@@ -37,4 +37,29 @@ def handle_geo(c, cmd_p, target):
         target.sendall(f":{added}\r\n".encode())
         return True
 
+    elif c == "GEOPOS":
+        # Format: GEOPOS key member [member ...]
+        k = arg(1)
+        members = cmd_p[2:]
+        
+        # Respons utama adalah sebuah Array yang isinya sebanyak member yang ditanya
+        res = f"*{len(members)}\r\n"
+        
+        zset = None
+        if k in store.DATA_STORE:
+            val, _ = store.DATA_STORE[k]
+            if isinstance(val, store.SortedSet):
+                zset = val
+                
+        for member in members:
+            if zset and member in zset.members:
+                # Member ada. Hardcode ke "0" dan "0" sesuai instruksi saat ini.
+                res += "*2\r\n$1\r\n0\r\n$1\r\n0\r\n"
+            else:
+                # Member tidak ada (atau key tidak ada). Kirim null array.
+                res += "*-1\r\n"
+                
+        target.sendall(res.encode())
+        return True
+
     return False
