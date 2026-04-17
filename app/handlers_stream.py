@@ -58,16 +58,26 @@ def handle_stream(c, cmd_p, target):
         keys = cmd_p[streams_idx+1 : streams_idx+1+num_keys]
         ids = cmd_p[streams_idx+1+num_keys:]
         
+        # Selesaikan dulu ID "$" di awal agar tidak berubah-ubah saat looping
+        resolved_ids = []
+        for i in range(num_keys):
+            k, sid = keys[i], ids[i]
+            if sid == "$":
+                if k in store.DATA_STORE:
+                    s, _ = store.DATA_STORE[k]
+                    resolved_ids.append(s.entries[-1][0] if s.entries else "0-0")
+                else: resolved_ids.append("0-0")
+            else: resolved_ids.append(sid)
+
         block_ms = None
         if "block" in cmd_p: block_ms = int(cmd_p[cmd_p.index("block") + 1])
 
         def get_results():
             res = []
             for i in range(num_keys):
-                k, sid = keys[i], ids[i]
+                k, sid = keys[i], resolved_ids[i]
                 if k in store.DATA_STORE:
                     s, _ = store.DATA_STORE[k]
-                    if sid == "$": sid = s.entries[-1][0] if s.entries else "0-0"
                     entries = s.get_range(sid, "+", exclusive_start=True)
                     if entries: res.append((k, entries))
             return res
