@@ -39,6 +39,13 @@ def execute_command(cmd_p, target):
             else:
                 target.sendall(b"*0\r\n")
 
+        elif c == "SUBSCRIBE":
+            # Perintah berlangganan channel (Pub/Sub)
+            channel = arg(1) or ""
+            # Respons standar Redis: ["subscribe", nama_channel, jumlah_langganan]
+            res = f"*3\r\n$9\r\nsubscribe\r\n${len(channel)}\r\n{channel}\r\n:1\r\n"
+            target.sendall(res.encode())
+
         elif c == "CONFIG":
             # Mengambil informasi konfigurasi server
             sub = arg(1).upper() if arg(1) else ""
