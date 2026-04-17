@@ -215,9 +215,35 @@ def handle_client(connection):
 
                 connection.sendall(response.encode())
 
-    except Exception:
-        # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
-        pass
+            # ─────────────────────────────────────────
+            # PERINTAH: LLEN → Menghitung jumlah elemen dalam daftar
+            # ─────────────────────────────────────────
+            elif command == "LLEN":
+                # LLEN <kunci>
+                key = parts[4]  # Nama daftar yang mau dihitung panjangnya
+
+                # Cek apakah kunci ada di gudang
+                if key in DATA_STORE:
+                    data_lama, expiry = DATA_STORE[key]  # Ambil isinya
+
+                    if isinstance(data_lama, list):
+                        # Hitung jumlah elemen menggunakan len() (fungsi bawaan Python)
+                        jumlah = len(data_lama)
+                    else:
+                        # Kunci ada tapi bukan list, anggap panjangnya 0
+                        jumlah = 0
+                else:
+                    # Kunci tidak ditemukan di gudang, kembalikan 0
+                    jumlah = 0
+
+                # Balas dengan jumlah dalam format Integer (:jumlah\r\n)
+                response = f":{jumlah}\r\n"
+                connection.sendall(response.encode())
+
+
+        except Exception:
+            # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
+            pass
     finally:
         # Apapun yang terjadi, pastikan koneksi dengan klien ini ditutup dengan baik
         connection.close()
