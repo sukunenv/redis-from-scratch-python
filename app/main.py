@@ -235,6 +235,37 @@ def handle_client(connection):
                 response = f":{jumlah}\r\n"
                 connection.sendall(response.encode())
 
+            # ─────────────────────────────────────────
+            # PERINTAH: LPOP → Ambil dan hapus elemen PERTAMA dari daftar
+            # ─────────────────────────────────────────
+            elif command == "LPOP":
+                # LPOP <kunci>
+                key = parts[4]  # Nama daftar yang mau diambil elemen pertamanya
+
+                # Cek apakah kunci ada di gudang
+                if key in DATA_STORE:
+                    data_lama, expiry = DATA_STORE[key]  # Ambil isinya
+
+                    # Pastikan isinya adalah list dan tidak kosong
+                    if isinstance(data_lama, list) and len(data_lama) > 0:
+                        # .pop(0) = ambil sekaligus hapus elemen di posisi pertama (index 0)
+                        elemen_pertama = data_lama.pop(0)
+
+                        # Simpan kembali daftar yang sudah berkurang satu ke gudang
+                        DATA_STORE[key] = (data_lama, expiry)
+
+                        # Balas dengan elemen yang diambil dalam format Bulk String
+                        response = f"${len(elemen_pertama)}\r\n{elemen_pertama}\r\n"
+                    else:
+                        # Daftar kosong atau bukan list, balas dengan null
+                        response = "$-1\r\n"
+                else:
+                    # Kunci tidak ditemukan di gudang, balas dengan null
+                    response = "$-1\r\n"
+
+                connection.sendall(response.encode())
+
+
     except Exception:
         # Kalau ada error tak terduga, kita diamkan saja supaya server tidak mati
         pass
