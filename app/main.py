@@ -1,6 +1,23 @@
+import os
+import sys
+
+# [JALUR CEPAT] Bikin folder AOF secepat kilat sebelum loading module lain
+_dir = os.getcwd()
+_appendonly = "no"
+_appenddirname = "appendonlydir"
+
+for i in range(len(sys.argv) - 1):
+    if sys.argv[i] == "--dir": _dir = sys.argv[i+1]
+    elif sys.argv[i] == "--appendonly": _appendonly = sys.argv[i+1]
+    elif sys.argv[i] == "--appenddirname": _appenddirname = sys.argv[i+1]
+
+if _appendonly.strip().lower() == "yes":
+    _aof_dir = os.path.join(_dir, _appenddirname)
+    print(f"DEBUG: Membuka jalur cepat untuk buat folder di {_aof_dir}", flush=True)
+    os.makedirs(_aof_dir, exist_ok=True)
+
 import socket
 import threading
-import sys
 
 # Mengambil alat-alat yang kita butuhkan dari modul lain di dalam folder app
 from app.protocol import parse_resp
@@ -116,8 +133,6 @@ def handle_client(connection):
                         store.SUBSCRIBERS[chan].discard(connection)
         connection.close()
 
-import app.store as store
-
 from app.replication import initiate_handshake
 from app.rdb import load_rdb
 
@@ -128,12 +143,6 @@ def main():
         if key in sys.argv:
             try: store.CONFIG[key[2:]] = sys.argv[sys.argv.index(key) + 1]
             except: pass
-
-    # Bikin folder AOF kalau fiturnya dinyalakan
-    import os
-    if store.CONFIG.get("appendonly") == "yes":
-        aof_dir = os.path.join(store.CONFIG["dir"], store.CONFIG["appenddirname"])
-        os.makedirs(aof_dir, exist_ok=True)
 
     # MUAT DATA DARI RDB: Baca database dari file jika ada
     load_rdb()
