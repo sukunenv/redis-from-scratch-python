@@ -88,8 +88,8 @@ def handle_list(c, cmd_p, target):
                     target.sendall(res.encode())
                     return True
             
-            # Cek timeout
-            if (time.time() - start_wait) >= timeout_sec:
+            # Cek timeout (hanya jika timeout_sec > 0)
+            if timeout_sec > 0 and (time.time() - start_wait) >= timeout_sec:
                 target.sendall(b"*-1\r\n") # Null array jika timeout
                 return True
             
