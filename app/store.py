@@ -28,6 +28,13 @@ REPLICAS = []
 # Offset khusus untuk Slave (jumlah byte yang diterima dari Master)
 REPLICA_OFFSET = 0
 
+# Pencatatan offset masing-masing Slave (untuk Master)
+# Format: { koneksi: offset_terakhir }
+REPLICA_OFFSETS = {}
+
+# Offset total yang sudah dikeluarkan Master (untuk propagasi)
+MASTER_REPL_OFFSET = 0
+
 class Stream:
     def __init__(self):
         self.entries = []

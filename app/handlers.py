@@ -13,6 +13,9 @@ def propagate_command(cmd_p):
     for arg in cmd_p:
         res += f"${len(str(arg))}\r\n{arg}\r\n"
     data = res.encode()
+    # Hitung panjang perintah ini dan tambahkan ke offset Master
+    store.MASTER_REPL_OFFSET += len(data)
+    
     # Kirim ke semua Slave yang terdaftar secara aman
     with store.BLOCK_LOCK:
         for replica in store.REPLICAS:
@@ -50,6 +53,13 @@ def execute_command(cmd_p, target):
             if arg(1) and arg(1).upper() == "GETACK":
                 # Slave merespons dengan jumlah byte yang sudah diproses
                 target.sendall(f"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n${len(str(store.REPLICA_OFFSET))}\r\n{store.REPLICA_OFFSET}\r\n".encode())
+            elif arg(1) and arg(1).upper() == "ACK":
+                # Master mencatat posisi (offset) Slave yang melapor
+                try:
+                    off = int(arg(2))
+                    with store.BLOCK_LOCK:
+                        store.REPLICA_OFFSETS[target] = off
+                except: pass
             else:
                 # Master cukup menjawab OK untuk konfigurasi awal
                 target.sendall(b"+OK\r\n")
@@ -68,12 +78,48 @@ def execute_command(cmd_p, target):
             with store.BLOCK_LOCK:
                 if target not in store.REPLICAS:
                     store.REPLICAS.append(target)
+                # Inisialisasi posisi awal slave jadi 0
+                store.REPLICA_OFFSETS[target] = 0
 
         elif c == "WAIT":
             # Perintah menunggu konfirmasi sinkronisasi dari Slave
-            # Untuk tahap awal, kita cukup balas dengan jumlah Slave yang terhubung
-            num_replicas = len(store.REPLICAS)
-            target.sendall(f":{num_replicas}\r\n".encode())
+            try:
+                num_required = int(arg(1))
+                timeout_ms = int(arg(2))
+            except:
+                target.sendall(b"-ERR invalid arguments\r\n")
+                return
+
+            # Target yang dicapai adalah offset Master saat ini
+            target_offset = store.MASTER_REPL_OFFSET
+            
+            # Fungsi pembantu untuk menghitung berapa slave yang sudah sinkron
+            def count_synced():
+                with store.BLOCK_LOCK:
+                    return sum(1 for off in store.REPLICA_OFFSETS.values() if off >= target_offset)
+
+            # Jika belum pernah ada perintah tulis, kita anggap semua slave sudah sinkron
+            if target_offset == 0:
+                target.sendall(f":{len(store.REPLICAS)}\r\n".encode())
+                return
+
+            # Jika sudah cukup slave yang sinkron sejak awal, langsung balas
+            if count_synced() >= num_required:
+                target.sendall(f":{count_synced()}\r\n".encode())
+                return
+
+            # Jika belum cukup, minta semua slave lapor posisi MEREKA SEKARANG
+            propagate_command(["REPLCONF", "GETACK", "*"])
+
+            # Tunggu sampai timeout habis atau sampai jumlah slave mencukupi
+            start_wait = time.time()
+            while (time.time() - start_wait) < (timeout_ms / 1000.0):
+                if count_synced() >= num_required:
+                    break
+                time.sleep(0.01) # Istirahat sejenak agar CPU tidak bekerja terlalu keras
+
+            # Berikan laporan akhir jumlah slave yang berhasil sinkron
+            target.sendall(f":{count_synced()}\r\n".encode())
 
         elif c == "ECHO":
             val = arg(1) or ""
