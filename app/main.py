@@ -81,10 +81,11 @@ def handle_client(connection):
                 
                 cmd_name = p[0].upper()
 
-                # Jika MULTI aktif, masukkan perintah ke antrean (kecuali EXEC/DISCARD)
+                # Jika MULTI aktif, masukkan perintah ke antrean (kecuali EXEC/DISCARD/UNWATCH?)
+                # Sebenarnya UNWATCH dalam MULTI dilarang oleh Redis
                 if is_transaction_active and cmd_name not in ["EXEC", "DISCARD"]:
-                    if cmd_name == "WATCH":
-                        connection.sendall(b"-ERR WATCH inside MULTI is not allowed\r\n")
+                    if cmd_name in ["WATCH", "UNWATCH"]:
+                        connection.sendall(f"-ERR {cmd_name} inside MULTI is not allowed\r\n".encode())
                     else:
                         transaction_queue.append(p)
                         connection.sendall(b"+QUEUED\r\n")
@@ -105,6 +106,10 @@ def handle_client(connection):
                         transaction_queue = []
                         watched_keys = {} # Bersihkan watch saat discard
                         connection.sendall(b"+OK\r\n")
+                    continue
+                elif cmd_name == "UNWATCH":
+                    watched_keys = {}
+                    connection.sendall(b"+OK\r\n")
                     continue
                 elif cmd_name == "EXEC":
                     if not is_transaction_active:
