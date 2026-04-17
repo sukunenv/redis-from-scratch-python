@@ -66,14 +66,25 @@ def execute_command(cmd_p, target, session=None):
         elif c == "PUBLISH":
             # Perintah mengirim pesan ke channel
             channel = arg(1) or ""
-            message = arg(2) or "" # Belum kita gunakan pesannya di tahap ini
+            message = arg(2) or ""
             
-            # Hitung berapa banyak pendengar di channel ini
+            # Ambil daftar pendengar dan kirim pesannya
             with store.BLOCK_LOCK:
                 subs = store.SUBSCRIBERS.get(channel, set())
                 count = len(subs)
+                
+                # Format pesan Redis: ["message", nama_channel, isi_pesan]
+                msg_resp = f"*3\r\n$7\r\nmessage\r\n${len(channel)}\r\n{channel}\r\n${len(message)}\r\n{message}\r\n".encode()
+                
+                # Kirim ke setiap subscriber secara biner
+                for sub_conn in subs:
+                    try:
+                        sub_conn.sendall(msg_resp)
+                    except:
+                        # Jika gagal (koneksi putus), biarkan saja (nanti dibersihkan di main.py)
+                        pass
             
-            # Balas dengan jumlah pendengar sebagai integer
+            # Balas klien yang mem-publish dengan jumlah pendengar yang menerima
             target.sendall(f":{count}\r\n".encode())
 
         elif c == "CONFIG":
