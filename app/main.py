@@ -33,6 +33,11 @@ STREAM_BLOCKING_CLIENTS = {}
 def handle_client(connection):
     # Fungsi ini dijalankan untuk setiap klien yang terhubung
     try:
+        # === State untuk Transaksi (MULTI/EXEC) ===
+        # Perintah dalam transaksi disimpan per koneksi klien
+        is_transaction_active = False
+        transaction_queue = []
+
         while True:
             # Mendengarkan dan menerima pesan dari klien (maksimal 1024 karakter)
             data = connection.recv(1024)
@@ -146,9 +151,21 @@ def handle_client(connection):
             # PERINTAH: MULTI → Memulai transaksi (antrean perintah)
             # ─────────────────────────────────────────
             elif command == "MULTI":
-                # Untuk tahap ini kita cukup membalas OK.
-                # Fitur antrean (queueing) akan dikerjakan di tahap selanjutnya.
+                # Tandai bahwa koneksi ini sekarang dalam mode transaksi
+                is_transaction_active = True
                 connection.sendall(b"+OK\r\n")
+
+            # ─────────────────────────────────────────
+            # PERINTAH: EXEC → Menjalankan semua perintah di antrean transaksi
+            # ─────────────────────────────────────────
+            elif command == "EXEC":
+                if not is_transaction_active:
+                    # Error: EXEC dipanggil tanpa diawali MULTI
+                    connection.sendall(b"-ERR EXEC without MULTI\r\n")
+                else:
+                    # Reset state dan balas (isi sebenarnya di tahap selanjutnya)
+                    is_transaction_active = False
+                    connection.sendall(b"*0\r\n")
 
             # ─────────────────────────────────────────
             # PERINTAH: TYPE → Mengecek jenis data (string, list, dll) dari sebuah kunci
